@@ -1,0 +1,16 @@
+timestamp,event_type,user,ip,severity
+2026-05-18T14:06:00Z,failed_login,svc-payment@corp,203.0.113.44,MEDIUM
+2026-05-18T14:07:15Z,failed_login,svc-payment@corp,203.0.113.44,MEDIUM
+2026-05-18T14:08:30Z,failed_login,admin-backup@corp,198.51.100.22,HIGH
+2026-05-18T14:09:45Z,auth_token_expired,jdoe@corp,10.0.4.12,LOW
+2026-05-18T14:10:20Z,failed_login,batch-jobs@corp,10.0.8.55,MEDIUM
+2026-05-18T14:11:00Z,mfa_challenge_passed,jsmith@corp,10.0.2.88,LOW
+2026-05-18T14:15:00Z,privilege_escalation,unknown-sa@corp,185.220.101.9,CRITICAL
+2026-05-18T14:15:30Z,admin_role_assigned,unknown-sa@corp,185.220.101.9,CRITICAL
+2026-05-18T14:16:00Z,suspicious_api_key_created,unknown-sa@corp,185.220.101.9,HIGH
+2026-05-18T14:20:00Z,failed_login,checkout-svc@corp,10.0.12.3,MEDIUM
+2026-05-18T14:22:10Z,deployment_auth_failure,deploy-bot@corp,10.0.1.100,HIGH
+2026-05-18T14:23:00Z,health_check_failure,system@internal,10.0.0.1,HIGH
+2026-05-18T14:25:00Z,geo_anomaly_login,unknown-sa@corp,185.220.101.9,HIGH
+2026-05-18T14:30:00Z,waf_block,external-scanner,45.33.32.156,MEDIUM
+2026-05-18T14:35:00Z,audit_log_access,compliance-bot@corp,10.0.0.50,LOW

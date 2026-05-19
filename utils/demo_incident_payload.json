@@ -1,0 +1,705 @@
+{
+  "blocked": false,
+  "incident_text": "Payment API showing elevated p99 latency above 1s and AuthService reporting a spike in failed logins during peak checkout hours. Database connection pool saturation observed.",
+  "intake": {
+    "agent": "IntakeAgent",
+    "status": "completed",
+    "intent": "performance_degradation",
+    "entities": [
+      "PaymentAPI",
+      "AuthService",
+      "DatabaseCluster",
+      "checkout",
+      "login"
+    ],
+    "affected_services": [
+      "PaymentAPI",
+      "AuthService",
+      "DatabaseCluster"
+    ],
+    "severity": "HIGH",
+    "keywords": [
+      "payment",
+      "auth",
+      "database"
+    ],
+    "guardrail": {
+      "safe": true,
+      "blocked": false,
+      "reason": null,
+      "matched_phrases": [],
+      "audit_entry": {
+        "event": "guardrail_pass",
+        "source": "intake",
+        "action": "continue"
+      }
+    },
+    "summary": "Incident classified as performance_degradation affecting PaymentAPI, AuthService, DatabaseCluster with HIGH severity.",
+    "started_at": "2026-05-19T02:33:26.336810+00:00",
+    "completed_at": "2026-05-19T02:33:27.915332+00:00",
+    "execution_duration_ms": 1578.5,
+    "confidence": 0.906,
+    "findings": [
+      "Incident classified as performance_degradation affecting PaymentAPI, AuthService, DatabaseCluster with HIGH severity.",
+      "Severity: HIGH",
+      "Services: PaymentAPI, AuthService, DatabaseCluster"
+    ],
+    "reasoning": "Classified intent from keywords and entity extraction; severity inferred from incident language and guardrail signals. Incident classified as performance_degradation affecting PaymentAPI, AuthService, DatabaseCluster with HIGH severity.",
+    "evidence_analyzed": [
+      "PaymentAPI",
+      "AuthService",
+      "DatabaseCluster",
+      "checkout",
+      "login",
+      "payment",
+      "auth",
+      "database"
+    ],
+    "actions_taken": [
+      "Guardrail scan",
+      "Intake accepted"
+    ]
+  },
+  "planner": {
+    "agent": "PlannerAgent",
+    "status": "completed",
+    "tasks": [
+      {
+        "id": "T1",
+        "agent": "LogAnalysisAgent",
+        "description": "Analyze cloud and security logs"
+      },
+      {
+        "id": "T2",
+        "agent": "ComplianceAgent",
+        "description": "Validate against policy and guardrails"
+      },
+      {
+        "id": "T3",
+        "agent": "RootCauseAgent",
+        "description": "Infer root cause from evidence"
+      },
+      {
+        "id": "T4",
+        "agent": "RemediationAgent",
+        "description": "Generate safe remediation steps",
+        "depends_on": [
+          "T1",
+          "T2",
+          "T3"
+        ]
+      },
+      {
+        "id": "T5",
+        "agent": "AuditorAgent",
+        "description": "Finalize audit trail and scores",
+        "depends_on": [
+          "T4"
+        ]
+      }
+    ],
+    "execution_order": [
+      "parallel:T1,T2",
+      "T3",
+      "T4",
+      "T5"
+    ],
+    "estimated_duration_minutes": 4,
+    "focus_services": [
+      "PaymentAPI",
+      "AuthService",
+      "DatabaseCluster"
+    ],
+    "plan_summary": "Execute log analysis and compliance in parallel, then RCA, remediation, and audit for PaymentAPI, AuthService, DatabaseCluster.",
+    "started_at": "2026-05-19T02:33:27.915504+00:00",
+    "completed_at": "2026-05-19T02:33:27.915541+00:00",
+    "execution_duration_ms": 0.0,
+    "confidence": 0.857,
+    "findings": [
+      "Execute log analysis and compliance in parallel, then RCA, remediation, and audit for PaymentAPI, AuthService, DatabaseCluster.",
+      "Task T1: Analyze cloud and security logs",
+      "Task T2: Validate against policy and guardrails",
+      "Task T3: Infer root cause from evidence",
+      "Task T4: Generate safe remediation steps"
+    ],
+    "reasoning": "Built parallel/sequential task graph based on severity and affected services.",
+    "evidence_analyzed": [
+      "Structured agent output"
+    ],
+    "actions_taken": [
+      "Status: completed",
+      "Completed agent pass"
+    ]
+  },
+  "log_analysis": {
+    "agent": "LogAnalysisAgent",
+    "status": "completed",
+    "cloud_log_rows_analyzed": 22,
+    "security_events_analyzed": 15,
+    "relevant_cloud_rows": 14,
+    "relevant_security_events": 12,
+    "anomalies": [
+      {
+        "type": "metric_threshold",
+        "service": "PaymentAPI",
+        "metric": "p99_latency_ms",
+        "value": "890",
+        "status": "WARN",
+        "timestamp": "2026-05-18T14:05:22Z"
+      },
+      {
+        "type": "metric_threshold",
+        "service": "PaymentAPI",
+        "metric": "p99_latency_ms",
+        "value": "1240",
+        "status": "CRITICAL",
+        "timestamp": "2026-05-18T14:08:33Z"
+      },
+      {
+        "type": "metric_threshold",
+        "service": "PaymentAPI",
+        "metric": "error_rate_pct",
+        "value": "4.2",
+        "status": "WARN",
+        "timestamp": "2026-05-18T14:08:35Z"
+      },
+      {
+        "type": "metric_threshold",
+        "service": "PaymentAPI",
+        "metric": "error_rate_pct",
+        "value": "8.7",
+        "status": "CRITICAL",
+        "timestamp": "2026-05-18T14:09:01Z"
+      },
+      {
+        "type": "metric_threshold",
+        "service": "AuthService",
+        "metric": "login_failure_rate",
+        "value": "12.5",
+        "status": "WARN",
+        "timestamp": "2026-05-18T14:10:15Z"
+      },
+      {
+        "type": "metric_threshold",
+        "service": "AuthService",
+        "metric": "login_failure_rate",
+        "value": "28.3",
+        "status": "CRITICAL",
+        "timestamp": "2026-05-18T14:11:02Z"
+      },
+      {
+        "type": "metric_threshold",
+        "service": "AuthService",
+        "metric": "token_validation_errors",
+        "value": "156",
+        "status": "WARN",
+        "timestamp": "2026-05-18T14:11:45Z"
+      },
+      {
+        "type": "metric_threshold",
+        "service": "DatabaseCluster",
+        "metric": "cpu_utilization_pct",
+        "value": "78",
+        "status": "WARN",
+        "timestamp": "2026-05-18T14:15:30Z"
+      },
+      {
+        "type": "metric_threshold",
+        "service": "DatabaseCluster",
+        "metric": "cpu_utilization_pct",
+        "value": "94",
+        "status": "CRITICAL",
+        "timestamp": "2026-05-18T14:18:45Z"
+      },
+      {
+        "type": "metric_threshold",
+        "service": "DatabaseCluster",
+        "metric": "connection_pool_used_pct",
+        "value": "98",
+        "status": "CRITICAL",
+        "timestamp": "2026-05-18T14:19:10Z"
+      },
+      {
+        "type": "metric_threshold",
+        "service": "PaymentAPI",
+        "metric": "checkout_timeout_count",
+        "value": "42",
+        "status": "CRITICAL",
+        "timestamp": "2026-05-18T14:19:55Z"
+      },
+      {
+        "type": "metric_threshold",
+        "service": "DatabaseCluster",
+        "metric": "slow_query_count",
+        "value": "127",
+        "status": "WARN",
+        "timestamp": "2026-05-18T14:20:30Z"
+      },
+      {
+        "type": "metric_threshold",
+        "service": "AuthService",
+        "metric": "health_check_status",
+        "value": "0",
+        "status": "ERROR",
+        "timestamp": "2026-05-18T14:22:00Z"
+      },
+      {
+        "type": "metric_threshold",
+        "service": "AuthService",
+        "metric": "pod_restart_count",
+        "value": "6",
+        "status": "WARN",
+        "timestamp": "2026-05-18T14:22:05Z"
+      },
+      {
+        "type": "security_event",
+        "event_type": "failed_login",
+        "user": "admin-backup@corp",
+        "ip": "198.51.100.22",
+        "severity": "HIGH",
+        "timestamp": "2026-05-18T14:08:30Z"
+      }
+    ],
+    "evidence": [
+      "[2026-05-18T14:05:22Z] PaymentAPI p99_latency_ms=890 (WARN)",
+      "[2026-05-18T14:08:33Z] PaymentAPI p99_latency_ms=1240 (CRITICAL)",
+      "[2026-05-18T14:08:35Z] PaymentAPI error_rate_pct=4.2 (WARN)",
+      "[2026-05-18T14:09:01Z] PaymentAPI error_rate_pct=8.7 (CRITICAL)",
+      "[2026-05-18T14:10:15Z] AuthService login_failure_rate=12.5 (WARN)",
+      "[2026-05-18T14:06:00Z] SEC failed_login user=svc-payment@corp ip=203.0.113.44",
+      "[2026-05-18T14:07:15Z] SEC failed_login user=svc-payment@corp ip=203.0.113.44",
+      "[2026-05-18T14:08:30Z] SEC failed_login user=admin-backup@corp ip=198.51.100.22"
+    ],
+    "top_metrics": [
+      {
+        "service": "AuthService",
+        "metric": "health_check_status",
+        "value": "0"
+      },
+      {
+        "service": "AuthService",
+        "metric": "login_failure_rate",
+        "value": "28.3"
+      },
+      {
+        "service": "AuthService",
+        "metric": "pod_restart_count",
+        "value": "6"
+      },
+      {
+        "service": "AuthService",
+        "metric": "token_validation_errors",
+        "value": "156"
+      },
+      {
+        "service": "DatabaseCluster",
+        "metric": "connection_pool_used_pct",
+        "value": "98"
+      }
+    ],
+    "summary": "Identified 15 anomalies across 3 service scope.",
+    "started_at": "2026-05-19T02:33:27.915592+00:00",
+    "completed_at": "2026-05-19T02:33:27.930159+00:00",
+    "execution_duration_ms": 14.6,
+    "confidence": 0.745,
+    "findings": [
+      "Identified 15 anomalies across 3 service scope.",
+      "PaymentAPI: p99_latency_ms",
+      "PaymentAPI: p99_latency_ms",
+      "PaymentAPI: error_rate_pct",
+      "PaymentAPI: error_rate_pct",
+      "AuthService: login_failure_rate"
+    ],
+    "reasoning": "Filtered cloud and security telemetry by service scope; flagged threshold breaches. Identified 15 anomalies across 3 service scope.",
+    "evidence_analyzed": [
+      "[2026-05-18T14:05:22Z] PaymentAPI p99_latency_ms=890 (WARN)",
+      "[2026-05-18T14:08:33Z] PaymentAPI p99_latency_ms=1240 (CRITICAL)",
+      "[2026-05-18T14:08:35Z] PaymentAPI error_rate_pct=4.2 (WARN)",
+      "[2026-05-18T14:09:01Z] PaymentAPI error_rate_pct=8.7 (CRITICAL)",
+      "[2026-05-18T14:10:15Z] AuthService login_failure_rate=12.5 (WARN)",
+      "[2026-05-18T14:06:00Z] SEC failed_login user=svc-payment@corp ip=203.0.113.44",
+      "[2026-05-18T14:07:15Z] SEC failed_login user=svc-payment@corp ip=203.0.113.44",
+      "[2026-05-18T14:08:30Z] SEC failed_login user=admin-backup@corp ip=198.51.100.22",
+      "Cloud rows: 22; Security events: 15"
+    ],
+    "actions_taken": [
+      "Status: completed",
+      "Identified 15 anomalies across 3 service scope."
+    ]
+  },
+  "rca": {
+    "agent": "RootCauseAgent",
+    "status": "completed",
+    "root_cause": "Database connection pool exhaustion under CPU saturation",
+    "contributing_factors": [
+      "Sustained CPU > 90% on DatabaseCluster",
+      "Checkout timeouts correlated with query latency"
+    ],
+    "confidence": 0.88,
+    "evidence_refs": [
+      "[2026-05-18T14:05:22Z] PaymentAPI p99_latency_ms=890 (WARN)",
+      "[2026-05-18T14:08:33Z] PaymentAPI p99_latency_ms=1240 (CRITICAL)",
+      "[2026-05-18T14:08:35Z] PaymentAPI error_rate_pct=4.2 (WARN)",
+      "[2026-05-18T14:09:01Z] PaymentAPI error_rate_pct=8.7 (CRITICAL)",
+      "[2026-05-18T14:10:15Z] AuthService login_failure_rate=12.5 (WARN)"
+    ],
+    "summary": "Performance degradation on primary DB cluster cascaded to checkout failures.",
+    "started_at": "2026-05-19T02:33:27.930269+00:00",
+    "completed_at": "2026-05-19T02:33:29.206939+00:00",
+    "execution_duration_ms": 1276.7,
+    "findings": [
+      "Database connection pool exhaustion under CPU saturation",
+      "Sustained CPU > 90% on DatabaseCluster",
+      "Checkout timeouts correlated with query latency"
+    ],
+    "reasoning": "Correlated anomalies with incident keywords using rule-based RCA; confidence weighted by evidence density. Performance degradation on primary DB cluster cascaded to checkout failures.",
+    "evidence_analyzed": [
+      "[2026-05-18T14:05:22Z] PaymentAPI p99_latency_ms=890 (WARN)",
+      "[2026-05-18T14:08:33Z] PaymentAPI p99_latency_ms=1240 (CRITICAL)",
+      "[2026-05-18T14:08:35Z] PaymentAPI error_rate_pct=4.2 (WARN)",
+      "[2026-05-18T14:09:01Z] PaymentAPI error_rate_pct=8.7 (CRITICAL)",
+      "[2026-05-18T14:10:15Z] AuthService login_failure_rate=12.5 (WARN)"
+    ],
+    "actions_taken": [
+      "Status: completed",
+      "Performance degradation on primary DB cluster cascaded to checkout failures."
+    ]
+  },
+  "compliance": {
+    "agent": "ComplianceAgent",
+    "status": "completed",
+    "safe": true,
+    "blocked": false,
+    "prompt_injection_detected": false,
+    "blocked_actions": [],
+    "requires_approval": [],
+    "policy_violations": [],
+    "guardrail": {
+      "safe": true,
+      "blocked": false,
+      "reason": null,
+      "matched_phrases": [],
+      "audit_entry": {
+        "event": "guardrail_pass",
+        "source": "compliance",
+        "action": "continue"
+      }
+    },
+    "compliance_score": 0.95,
+    "policy_reference": "incident_policy.md / compliance_rules.json",
+    "summary": "Compliance passed with 0 actions requiring approval.",
+    "started_at": "2026-05-19T02:33:27.930219+00:00",
+    "completed_at": "2026-05-19T02:33:27.930255+00:00",
+    "execution_duration_ms": 0.0,
+    "confidence": 0.95,
+    "findings": [
+      "Compliance passed with 0 actions requiring approval."
+    ],
+    "reasoning": "Matched request against compliance_rules.json and injection patterns; enforced approval requirements. Compliance passed with 0 actions requiring approval.",
+    "evidence_analyzed": [
+      "incident_policy.md / compliance_rules.json"
+    ],
+    "actions_taken": [
+      "Status: completed",
+      "Compliance passed with 0 actions requiring approval."
+    ]
+  },
+  "remediation": {
+    "agent": "RemediationAgent",
+    "status": "completed",
+    "blocked": false,
+    "auto_executed": false,
+    "human_approval_required": true,
+    "pending_approval_count": 2,
+    "actions": [
+      {
+        "step": 1,
+        "action": "Open SEV bridge and notify on-call + security",
+        "risk": "low",
+        "requires_approval": false,
+        "human_approval_required": false,
+        "execution_status": "recommended_not_executed",
+        "auto_executed": false
+      },
+      {
+        "step": 2,
+        "action": "Enable enhanced logging and distributed tracing sampling",
+        "risk": "low",
+        "requires_approval": false,
+        "human_approval_required": false,
+        "execution_status": "recommended_not_executed",
+        "auto_executed": false
+      },
+      {
+        "step": 3,
+        "action": "Scale PaymentAPI replicas and enable circuit breaker to AuthService",
+        "risk": "medium",
+        "requires_approval": false,
+        "human_approval_required": false,
+        "execution_status": "recommended_not_executed",
+        "auto_executed": false
+      },
+      {
+        "step": 4,
+        "action": "Fail over read traffic to replica and throttle heavy queries",
+        "risk": "high",
+        "requires_approval": true,
+        "human_approval_required": true,
+        "execution_status": "pending_human_approval",
+        "auto_executed": false
+      },
+      {
+        "step": 5,
+        "action": "Rollback AuthService deployment",
+        "risk": "medium",
+        "requires_approval": true,
+        "human_approval_required": true,
+        "execution_status": "pending_human_approval",
+        "auto_executed": false
+      }
+    ],
+    "rollback_plan": [
+      "Capture current deployment revision",
+      "Enable feature flag kill-switch if available",
+      "Document change ticket before execution"
+    ],
+    "estimated_mttr_minutes": 25,
+    "summary": "Generated 5 remediation steps (2 require human approval; none auto-executed).",
+    "started_at": "2026-05-19T02:33:29.207016+00:00",
+    "completed_at": "2026-05-19T02:33:29.207075+00:00",
+    "execution_duration_ms": 0.1,
+    "confidence": 0.775,
+    "findings": [
+      "Open SEV bridge and notify on-call + security",
+      "Enable enhanced logging and distributed tracing sampling",
+      "Scale PaymentAPI replicas and enable circuit breaker to AuthService",
+      "Fail over read traffic to replica and throttle heavy queries",
+      "Rollback AuthService deployment"
+    ],
+    "reasoning": "Generated least-privilege remediation steps; high-risk actions flagged for approval. Generated 5 remediation steps (2 require human approval; none auto-executed).",
+    "evidence_analyzed": [
+      "Capture current deployment revision",
+      "Enable feature flag kill-switch if available",
+      "Document change ticket before execution"
+    ],
+    "actions_taken": [
+      "Step 1: Open SEV bridge and notify on-call + security",
+      "Step 2: Enable enhanced logging and distributed tracing sampling",
+      "Step 3: Scale PaymentAPI replicas and enable circuit breaker to AuthService",
+      "Step 4: Fail over read traffic to replica and throttle heavy queries",
+      "Step 5: Rollback AuthService deployment"
+    ]
+  },
+  "auditor": {
+    "agent": "AuditorAgent",
+    "status": "completed",
+    "risk_score": 89,
+    "confidence_score": 87,
+    "severity": "HIGH",
+    "affected_services": [
+      "PaymentAPI",
+      "AuthService",
+      "DatabaseCluster"
+    ],
+    "workflow_status": [
+      {
+        "agent": "IntakeAgent",
+        "label": "Intake",
+        "status": "completed",
+        "detail": "Incident classified as performance_degradation affecting PaymentAPI, AuthService, DatabaseCluster with HIGH severity."
+      },
+      {
+        "agent": "PlannerAgent",
+        "label": "Planner",
+        "status": "completed",
+        "detail": "Execute log analysis and compliance in parallel, then RCA, remediation, and audit for PaymentAPI, AuthService, DatabaseCluster."
+      },
+      {
+        "agent": "LogAnalysisAgent",
+        "label": "Log Analysis",
+        "status": "completed",
+        "detail": "Identified 15 anomalies across 3 service scope."
+      },
+      {
+        "agent": "ComplianceAgent",
+        "label": "Compliance",
+        "status": "completed",
+        "detail": "Compliance passed with 0 actions requiring approval."
+      },
+      {
+        "agent": "RootCauseAgent",
+        "label": "Root Cause",
+        "status": "completed",
+        "detail": "Performance degradation on primary DB cluster cascaded to checkout failures."
+      },
+      {
+        "agent": "RemediationAgent",
+        "label": "Remediation",
+        "status": "completed",
+        "detail": "Generated 5 remediation steps (2 require human approval; none auto-executed)."
+      },
+      {
+        "agent": "AuditorAgent",
+        "label": "Auditor",
+        "status": "running",
+        "detail": ""
+      }
+    ],
+    "audit_trail": [
+      {
+        "timestamp": "2026-05-19T02:33:27.915493+00:00",
+        "step": "IntakeAgent",
+        "status": "completed",
+        "detail": "Incident classified as performance_degradation affecting PaymentAPI, AuthService, DatabaseCluster with HIGH severity."
+      },
+      {
+        "timestamp": "2026-05-19T02:33:27.915585+00:00",
+        "step": "PlannerAgent",
+        "status": "completed",
+        "detail": "Execute log analysis and compliance in parallel, then RCA, remediation, and audit for PaymentAPI, AuthService, DatabaseCluster."
+      },
+      {
+        "timestamp": "2026-05-19T02:33:27.930215+00:00",
+        "step": "LogAnalysisAgent",
+        "status": "completed",
+        "detail": "Identified 15 anomalies across 3 service scope."
+      },
+      {
+        "timestamp": "2026-05-19T02:33:27.930266+00:00",
+        "step": "ComplianceAgent",
+        "status": "completed",
+        "detail": "Compliance passed with 0 actions requiring approval."
+      },
+      {
+        "timestamp": "2026-05-19T02:33:29.207009+00:00",
+        "step": "RootCauseAgent",
+        "status": "completed",
+        "detail": "Performance degradation on primary DB cluster cascaded to checkout failures."
+      },
+      {
+        "timestamp": "2026-05-19T02:33:29.207120+00:00",
+        "step": "RemediationAgent",
+        "status": "completed",
+        "detail": "Generated 5 remediation steps (2 require human approval; none auto-executed)."
+      },
+      {
+        "timestamp": "2026-05-19T02:33:29.207202+00:00",
+        "step": "AuditorAgent",
+        "status": "completed",
+        "detail": "Final report ready"
+      }
+    ],
+    "executive_summary": "Incident processed for PaymentAPI, AuthService, DatabaseCluster at HIGH severity. Root cause: Database connection pool exhaustion under CPU saturation. Generated 5 remediation steps (2 require human approval; none auto-executed). All actions logged for audit; approve flagged steps before production changes.",
+    "incident_summary": "Incident classified as performance_degradation affecting PaymentAPI, AuthService, DatabaseCluster with HIGH severity.",
+    "rca_summary": "Performance degradation on primary DB cluster cascaded to checkout failures.",
+    "compliance_summary": "Compliance passed with 0 actions requiring approval.",
+    "remediation_summary": "Generated 5 remediation steps (2 require human approval; none auto-executed).",
+    "timestamp_utc": "2026-05-19T02:33:29.207182+00:00",
+    "final_report_ready": true,
+    "started_at": "2026-05-19T02:33:29.207124+00:00",
+    "completed_at": "2026-05-19T02:33:29.207187+00:00",
+    "execution_duration_ms": 0.1,
+    "confidence": 0.92,
+    "findings": [
+      "Incident processed for PaymentAPI, AuthService, DatabaseCluster at HIGH severity. Root cause: Database connection pool exhaustion under CPU saturation. Generated 5 remediation steps (2 require human a",
+      "Risk score: 88"
+    ],
+    "reasoning": "Aggregated agent outputs into risk/confidence scores and executive narrative.",
+    "evidence_analyzed": [
+      "Structured agent output"
+    ],
+    "actions_taken": [
+      "Final report compiled",
+      "Audit trail sealed"
+    ]
+  },
+  "workflow_status": [
+    {
+      "agent": "IntakeAgent",
+      "label": "Intake",
+      "status": "completed",
+      "detail": "Incident classified as performance_degradation affecting PaymentAPI, AuthService, DatabaseCluster with HIGH severity."
+    },
+    {
+      "agent": "PlannerAgent",
+      "label": "Planner",
+      "status": "completed",
+      "detail": "Execute log analysis and compliance in parallel, then RCA, remediation, and audit for PaymentAPI, AuthService, DatabaseCluster."
+    },
+    {
+      "agent": "LogAnalysisAgent",
+      "label": "Log Analysis",
+      "status": "completed",
+      "detail": "Identified 15 anomalies across 3 service scope."
+    },
+    {
+      "agent": "ComplianceAgent",
+      "label": "Compliance",
+      "status": "completed",
+      "detail": "Compliance passed with 0 actions requiring approval."
+    },
+    {
+      "agent": "RootCauseAgent",
+      "label": "Root Cause",
+      "status": "completed",
+      "detail": "Performance degradation on primary DB cluster cascaded to checkout failures."
+    },
+    {
+      "agent": "RemediationAgent",
+      "label": "Remediation",
+      "status": "completed",
+      "detail": "Generated 5 remediation steps (2 require human approval; none auto-executed)."
+    },
+    {
+      "agent": "AuditorAgent",
+      "label": "Auditor",
+      "status": "completed",
+      "detail": "Final report ready"
+    }
+  ],
+  "audit_trail": [
+    {
+      "timestamp": "2026-05-19T02:33:27.915493+00:00",
+      "step": "IntakeAgent",
+      "status": "completed",
+      "detail": "Incident classified as performance_degradation affecting PaymentAPI, AuthService, DatabaseCluster with HIGH severity."
+    },
+    {
+      "timestamp": "2026-05-19T02:33:27.915585+00:00",
+      "step": "PlannerAgent",
+      "status": "completed",
+      "detail": "Execute log analysis and compliance in parallel, then RCA, remediation, and audit for PaymentAPI, AuthService, DatabaseCluster."
+    },
+    {
+      "timestamp": "2026-05-19T02:33:27.930215+00:00",
+      "step": "LogAnalysisAgent",
+      "status": "completed",
+      "detail": "Identified 15 anomalies across 3 service scope."
+    },
+    {
+      "timestamp": "2026-05-19T02:33:27.930266+00:00",
+      "step": "ComplianceAgent",
+      "status": "completed",
+      "detail": "Compliance passed with 0 actions requiring approval."
+    },
+    {
+      "timestamp": "2026-05-19T02:33:29.207009+00:00",
+      "step": "RootCauseAgent",
+      "status": "completed",
+      "detail": "Performance degradation on primary DB cluster cascaded to checkout failures."
+    },
+    {
+      "timestamp": "2026-05-19T02:33:29.207120+00:00",
+      "step": "RemediationAgent",
+      "status": "completed",
+      "detail": "Generated 5 remediation steps (2 require human approval; none auto-executed)."
+    },
+    {
+      "timestamp": "2026-05-19T02:33:29.207202+00:00",
+      "step": "AuditorAgent",
+      "status": "completed",
+      "detail": "Final report ready"
+    }
+  ],
+  "llm_provider": "groq"
+}

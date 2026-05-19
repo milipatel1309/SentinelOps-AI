@@ -1,0 +1,27 @@
+{
+  "version": "1.0",
+  "framework": "SentinelOps Enterprise",
+  "blocked_actions": [
+    "delete production database",
+    "disable authentication",
+    "disable logging",
+    "escalate privileges",
+    "expose customer pii",
+    "reveal secrets",
+    "bypass policy",
+    "ignore compliance rules",
+    "drop production tables",
+    "disable audit trail"
+  ],
+  "requires_approval": [
+    "rollback production",
+    "failover database",
+    "revoke all tokens",
+    "scale down to zero",
+    "purge user data",
+    "modify firewall rules",
+    "execute shell on production"
+  ],
+  "data_retention_days": 90,
+  "pii_handling": "mask_and_tokenize"
+}
