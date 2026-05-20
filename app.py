@@ -47,6 +47,7 @@ from utils.incident_cases import (
     create_live_incident,
     create_standby_incident,
     demo_analyst_names,
+    enrich_incident_display_fields,
     escalate_incident,
     filter_incidents_by_title,
     filter_incidents_for_role,
@@ -69,12 +70,22 @@ from utils.incident_cases import (
     role_is_read_only_operations,
     ui_status_key,
 )
+from utils.datetime_utils import PROFILE_TIMEZONES, DEFAULT_TIMEZONE
 from utils.llm_client import get_llm_status
+from utils.user_profiles import (
+    LOGIN_HINT,
+    create_profile,
+    get_current_role,
+    get_current_user,
+    get_current_user_id,
+    get_user_timezone,
+    init_user_state,
+    login_user,
+    logout_user,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# Demo only — not production authentication.
-DEMO_ACCESS_CODE = "demo123"
 ROLES = [
     "SOC Analyst",
     "Incident Commander",
@@ -1431,10 +1442,11 @@ def init_session() -> None:
         if k not in st.session_state:
             st.session_state[k] = v
     if "incidents" not in st.session_state:
-        st.session_state.incidents = load_incident_registry()
+        st.session_state.incidents = load_incident_registry(get_user_timezone())
     else:
-        refresh_incident_durations(st.session_state.incidents)
+        refresh_incident_durations(st.session_state.incidents, tz=get_user_timezone())
     init_access_state()
+    init_user_state()
 
 
 def get_selected_incident() -> dict | None:
@@ -1488,9 +1500,10 @@ def investigation_page_for_role(role: str) -> str:
 def render_temporary_access_badge(page: str) -> None:
     """Show countdown when page access is via an approved temporary grant."""
     role = get_demo_role()
+    user_id = get_current_user_id()
     if base_can_access_page(role, page):
         return
-    scheduled = get_scheduled_grant(role, page)
+    scheduled = get_scheduled_grant(user_id, page)
     if scheduled:
         mins = minutes_until_start(scheduled)
         st.markdown(
@@ -1498,7 +1511,7 @@ def render_temporary_access_badge(page: str) -> None:
             unsafe_allow_html=True,
         )
         return
-    grant = get_active_grant(role, page)
+    grant = get_active_grant(user_id, page)
     if not grant:
         return
     mins = minutes_until_expiry(grant)
@@ -1519,7 +1532,9 @@ def render_restricted_access_card(
     required_roles: str,
     reason: str,
 ) -> None:
-    scheduled = get_scheduled_grant(current_role, requested_section)
+    user = get_current_user() or {}
+    user_id = user.get("user_id")
+    scheduled = get_scheduled_grant(user_id, requested_section)
     if scheduled:
         mins = minutes_until_start(scheduled)
         st.markdown(
@@ -1530,7 +1545,9 @@ def render_restricted_access_card(
     st.markdown(
         '<div class="restricted-access-card">'
         "<h3>Access Restricted</h3>"
-        "<p>Your current role does not have permission to open this section.</p>"
+        "<p>Your account does not have permission to open this section.</p>"
+        f"<p><strong>Signed in as:</strong> {user.get('full_name', current_role)} "
+        f"(@{user.get('username', '—')})</p>"
         f"<p><strong>Current role:</strong> {current_role}</p>"
         f"<p><strong>Requested section:</strong> {requested_section}</p>"
         f"<p><strong>Required approval role:</strong> {ELEVATION_APPROVER_ROLE}</p>"
@@ -1556,7 +1573,11 @@ def render_restricted_access_card(
             placeholder="Why do you need temporary access to this section?",
             key=f"elev_reason_{requested_section}",
         )
-        window = render_access_request_form(requested_section, key_prefix=f"elev_{requested_section}")
+        window = render_access_request_form(
+            requested_section,
+            key_prefix=f"elev_{requested_section}",
+            default_timezone=get_user_timezone(),
+        )
         incident_id = st.text_input(
             "Incident ID (optional)",
             value=st.session_state.get("selected_incident_id") or "",
@@ -1567,11 +1588,13 @@ def render_restricted_access_card(
                 st.error("Please provide a justification.")
             elif window.get("validation_error"):
                 st.error(window["validation_error"])
+            elif not get_current_user():
+                st.error("You must be signed in to request access.")
             else:
                 row = submit_access_request(
-                    requester_role=current_role,
-                    section=requested_section,
-                    reason=req_reason,
+                    get_current_user(),
+                    requested_section,
+                    req_reason,
                     window=window,
                     incident_id=incident_id.strip() or None,
                 )
@@ -1626,11 +1649,8 @@ def sync_case_status_from_result() -> None:
 
 
 def get_demo_role() -> str:
-    """Current demo role; defaults to SOC Analyst when unset."""
-    role = st.session_state.get("demo_role")
-    if role in ROLES:
-        return role
-    return ROLES[0]
+    """Current user role (legacy alias)."""
+    return get_current_role()
 
 
 def role_badge_text(role: str | None = None) -> str:
@@ -1642,7 +1662,7 @@ def maybe_preload_demo_incident() -> None:
     """Populate session investigation for Commander / Compliance demo roles."""
     if st.session_state.get("demo_incident_preloaded"):
         return
-    role = st.session_state.get("demo_role")
+    role = get_current_role()
     if not should_preload_demo_for_role(role):
         return
     preload_id = get_preload_incident_id(role)
@@ -1661,7 +1681,7 @@ def apply_role_landing() -> None:
     """Set default nav page once per login; do not override later navigation."""
     if st.session_state.get("role_landing_applied"):
         return
-    role = st.session_state.get("demo_role")
+    role = get_current_role()
     if role in ROLE_DEFAULT_PAGE:
         st.session_state.page = ROLE_DEFAULT_PAGE[role]
     st.session_state.role_landing_applied = True
@@ -1854,8 +1874,21 @@ _SHIELD_SVG = (
 )
 
 
+def _reset_session_after_auth() -> None:
+    st.session_state.role_landing_applied = False
+    st.session_state.demo_incident_preloaded = False
+    tz = get_user_timezone()
+    st.session_state.incidents = load_incident_registry(tz)
+    st.session_state.selected_incident_id = None
+    st.session_state._open_investigation_id = None
+    st.session_state.result = None
+    st.session_state.active_case_result = None
+    st.session_state.incident_input = ""
+    st.session_state.incident_running = False
+
+
 def render_demo_login() -> None:
-    """Demo access gate — not production authentication."""
+    """Demo profile login — session-only, not production authentication."""
     st.markdown('<div class="demo-login-wrap">', unsafe_allow_html=True)
     _left, center, _right = st.columns([1, 1.2, 1])
     with center:
@@ -1869,36 +1902,57 @@ def render_demo_login() -> None:
             '<p class="demo-login-subtitle">'
             "Enterprise Multi-Agent Incident Response Console"
             "</p>"
+            '<p class="demo-login-subtitle" style="margin-top:0.5rem;font-size:0.82rem;opacity:0.85;">'
+            "Demo profiles stored in session only — no database or real auth."
+            "</p>"
             "</div>"
             "</div>",
             unsafe_allow_html=True,
         )
-        role = st.selectbox("Role", ROLES)
-        access_code = st.text_input(
-            "Access code",
-            type="password",
-            placeholder="Enter demo access code",
-        )
-        if st.button("Enter SentinelOps Console", type="primary", use_container_width=True):
-            if access_code == DEMO_ACCESS_CODE:
-                st.session_state.authenticated = True
-                st.session_state.demo_role = role
-                st.session_state.role_landing_applied = False
-                st.session_state.demo_incident_preloaded = False
-                st.session_state.incidents = load_incident_registry()
-                st.session_state.selected_incident_id = None
-                st.session_state._open_investigation_id = None
-                st.session_state.result = None
-                st.session_state.active_case_result = None
-                st.session_state.incident_input = ""
-                st.session_state.incident_running = False
-                st.rerun()
-            else:
-                st.error("Invalid access code. Please try again.")
-        st.markdown(
-            '<p class="demo-login-hint">Demo access code: <code>demo123</code></p>',
-            unsafe_allow_html=True,
-        )
+        tab_login, tab_create = st.tabs(["Login", "Create Profile"])
+        with tab_login:
+            username = st.text_input("Username", key="login_username", placeholder="jordan.analyst")
+            password = st.text_input("Password", type="password", key="login_password")
+            if st.button("Login", type="primary", use_container_width=True, key="btn_login"):
+                user = login_user(username, password)
+                if user:
+                    st.session_state.demo_role = user["role"]
+                    _reset_session_after_auth()
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password.")
+            st.markdown(f'<p class="demo-login-hint">{LOGIN_HINT}</p>', unsafe_allow_html=True)
+        with tab_create:
+            full_name = st.text_input("Full name", key="create_full_name")
+            new_username = st.text_input("Username", key="create_username")
+            new_password = st.text_input("Password", type="password", key="create_password")
+            new_role = st.selectbox("Role", ROLES, key="create_role")
+            department = st.text_input("Department (optional)", key="create_department")
+            tz_index = PROFILE_TIMEZONES.index(DEFAULT_TIMEZONE)
+            new_tz = st.selectbox(
+                "Timezone",
+                PROFILE_TIMEZONES,
+                index=tz_index,
+                key="create_timezone",
+            )
+            if st.button("Create Profile", type="primary", use_container_width=True, key="btn_create"):
+                try:
+                    user = create_profile(
+                        full_name=full_name,
+                        username=new_username,
+                        password=new_password,
+                        role=new_role,
+                        department=department,
+                        timezone=new_tz,
+                    )
+                    st.session_state.authenticated = True
+                    st.session_state.current_user = user
+                    st.session_state.demo_role = user["role"]
+                    _reset_session_after_auth()
+                    st.success(f"Profile created. Welcome, {user['full_name']}.")
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1952,10 +2006,14 @@ def render_header() -> None:
 
 def render_sidebar() -> str:
     role = get_demo_role()
-    nav_entries = sidebar_nav_entries(role)
+    user = get_current_user() or {}
+    user_id = user.get("user_id")
+    nav_entries = sidebar_nav_entries(role, user_id)
     st.sidebar.markdown('<p class="sidebar-brand">SentinelOps AI</p>', unsafe_allow_html=True)
     st.sidebar.markdown(
-        f'<p class="sidebar-role">Current Role: <strong>{role}</strong></p>',
+        f'<p class="sidebar-role"><strong>{user.get("full_name", role)}</strong></p>'
+        f'<p class="sidebar-role">@{user.get("username", "—")} · {role}</p>'
+        f'<p class="sidebar-role">Timezone: {user.get("timezone", DEFAULT_TIMEZONE)}</p>',
         unsafe_allow_html=True,
     )
     home_page = ROLE_DEFAULT_PAGE.get(role, "Dashboard")
@@ -2030,7 +2088,7 @@ def render_sidebar() -> str:
         key="sidebar_nav_radio",
     )
     clicked_page = page_labels[choice]
-    if not can_access_page(role, clicked_page):
+    if not can_access_page(role, clicked_page, user_id):
         st.session_state.show_restricted_for = clicked_page
         st.session_state.restricted_page = clicked_page
         st.session_state.page = previous_page if previous_page in page_names else home_page
@@ -2061,10 +2119,7 @@ def render_sidebar() -> str:
         st.sidebar.metric("Confidence", f"{auditor.get('confidence_score', '—')}%")
     st.sidebar.markdown("---")
     if st.sidebar.button("Logout", use_container_width=True):
-        st.session_state.authenticated = False
-        st.session_state.demo_role = None
-        st.session_state.role_landing_applied = False
-        st.session_state.demo_incident_preloaded = False
+        logout_user()
         st.session_state.incidents = load_incident_registry()
         st.session_state.selected_incident_id = None
         st.session_state._open_investigation_id = None
@@ -2073,7 +2128,6 @@ def render_sidebar() -> str:
         st.session_state.incident_input = ""
         st.session_state.incident_running = False
         st.session_state.page = "Dashboard"
-        # Preserve elevation grants/requests across role switch (demo flow).
         st.rerun()
     return page
 
@@ -2117,6 +2171,7 @@ def render_footer() -> None:
 
 
 def render_incident_timestamps(incident: dict) -> None:
+    enrich_incident_display_fields(incident, get_user_timezone())
     parts = [
         f"<strong>Created:</strong> {incident.get('created_display', '—')}",
         f"<strong>Last Updated:</strong> {incident.get('last_updated_display', '—')}",
@@ -2151,7 +2206,7 @@ def render_incident_queue_table(role: str) -> None:
         blocked_n = sum(1 for i in incidents if i.get("status") == "BLOCKED")
         st.metric("Blocked", blocked_n)
 
-    rows = queue_rows_for_role(role, incidents)
+    rows = queue_rows_for_role(role, incidents, tz=get_user_timezone())
     if rows:
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     else:
@@ -2781,9 +2836,10 @@ def page_compliance_operations(result: dict | None) -> None:
 
     elev_audit = [
         e
-        for e in recent_platform_audit(20)
+        for e in recent_platform_audit(20, viewer_timezone=get_user_timezone())
         if "access" in (e.get("event") or "")
-        or "temporary" in (e.get("event") or "")
+        or "profile" in (e.get("event") or "")
+        or "logged" in (e.get("event") or "")
         or (e.get("event") or "") in ("access_expired", "access_activated")
     ]
     if elev_audit:
@@ -2791,7 +2847,8 @@ def page_compliance_operations(result: dict | None) -> None:
         for entry in elev_audit[:8]:
             st.markdown(
                 f'`{entry.get("display")}` **{entry.get("event")}** — '
-                f'{entry.get("role")} / {entry.get("section")}: {entry.get("detail")}'
+                f'{entry.get("actor_username")} ({entry.get("actor_role")}) → '
+                f'{entry.get("target_user")} / {entry.get("section")}: {entry.get("detail")}'
             )
 
     if result:
@@ -2810,7 +2867,10 @@ def render_access_requests_queue_section(*, can_review: bool) -> None:
     with c2:
         st.metric("Pending", len(pending))
     with c3:
-        st.metric("Active grants", len(st.session_state.get("temporary_grants", [])))
+        st.metric(
+            "Active grants",
+            len(st.session_state.get("temporary_permissions", [])),
+        )
     if not requests:
         st.info("No access elevation requests yet. Submit from a locked sidebar section.")
         return
@@ -2819,44 +2879,41 @@ def render_access_requests_queue_section(*, can_review: bool) -> None:
         rows.append(
             {
                 "Request ID": req.get("request_id"),
-                "Requested By (role)": req.get("requester_role"),
-                "Requested Section": req.get("requested_section"),
+                "Requester": req.get("requester_full_name") or req.get("requester_role"),
+                "Username": req.get("requester_username", "—"),
+                "Role": req.get("requester_role"),
+                "Section": req.get("requested_section"),
                 "Reason": (req.get("reason") or "")[:120],
-                "Start (date)": req.get("start_date") or "—",
-                "Start (time)": req.get("start_time") or req.get("start_display", "—"),
-                "Start (tz)": req.get("start_timezone") or "—",
-                "End (date)": req.get("end_date") or "—",
-                "End (time)": req.get("end_time") or req.get("end_display", "—"),
-                "End (tz)": req.get("end_timezone") or "—",
-                "Calculated Duration": req.get("calculated_duration_display")
+                "Access Start": req.get("start_display", "—"),
+                "Access End": req.get("end_display", "—"),
+                "Timezone": req.get("timezone") or req.get("start_timezone", "—"),
+                "Duration": req.get("calculated_duration_display")
                 or f"{req.get('calculated_duration_minutes', req.get('requested_duration', '—'))} min",
-                "Created Timestamp": req.get("created_timestamp")
-                or f"{req.get('created_date', '')} {req.get('created_time', '')}".strip(),
                 "Status": req.get("status"),
-                "Approve": "—",
-                "Deny": "—",
             }
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     if not can_review or not pending:
         return
     st.markdown("#### Review pending requests")
+    approver = get_current_user()
     for req in pending:
         rid = req["request_id"]
         st.markdown(
-            f"**{rid}** — {req.get('requester_role')} → **{req.get('requested_section')}** · "
+            f"**{rid}** — {req.get('requester_full_name')} (@{req.get('requester_username')}) "
+            f"· {req.get('requester_role')} → **{req.get('requested_section')}** · "
             f"{req.get('window_preview') or req.get('calculated_duration_display', '')}"
         )
         st.caption(req.get("reason", ""))
         b1, b2, _ = st.columns([1, 1, 3])
         with b1:
             if st.button("Approve", key=f"appr_elev_cc_{rid}", type="primary"):
-                if approve_access_request(rid):
+                if approve_access_request(rid, approver=approver):
                     st.success(f"Approved {rid}.")
                     st.rerun()
         with b2:
             if st.button("Deny", key=f"deny_elev_cc_{rid}"):
-                if deny_access_request(rid):
+                if deny_access_request(rid, approver=approver):
                     st.warning(f"Denied {rid}.")
                     st.rerun()
         st.markdown("---")
@@ -2876,7 +2933,7 @@ def page_access_elevation_requests() -> None:
     render_access_requests_queue_section(can_review=(role == "SOC Manager"))
 
     st.markdown(_section_heading("Platform audit — elevation", "⌘"), unsafe_allow_html=True)
-    audit = recent_platform_audit(15)
+    audit = recent_platform_audit(15, viewer_timezone=get_user_timezone())
     if not audit:
         st.caption("No elevation audit events yet.")
     else:
@@ -2884,7 +2941,8 @@ def page_access_elevation_requests() -> None:
             st.markdown(
                 f'<div class="elevation-audit-row">'
                 f'<strong>{entry.get("display")}</strong> · {entry.get("event")} · '
-                f'{entry.get("role")} · {entry.get("section")} — {entry.get("detail")}'
+                f'{entry.get("actor_username")} ({entry.get("actor_role")}) · '
+                f'target {entry.get("target_user")} · {entry.get("section")} — {entry.get("detail")}'
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -3353,13 +3411,14 @@ def main() -> None:
 
     process_pending_investigation_open()
     apply_role_landing()
-    refresh_incident_durations(st.session_state.incidents)
+    refresh_incident_durations(st.session_state.incidents, tz=get_user_timezone())
     result = st.session_state.get("result")
     render_header()
     page = render_sidebar()
     role = get_demo_role()
+    user_id = get_current_user_id()
     restricted = st.session_state.get("show_restricted_for")
-    if restricted and not can_access_page(role, restricted):
+    if restricted and not can_access_page(role, restricted, user_id):
         st.markdown('<div class="restricted-overlay-wrap">', unsafe_allow_html=True)
         render_restricted_access_card(
             role,
@@ -3383,7 +3442,7 @@ def main() -> None:
         "System Metrics": page_metrics,
         "Access Elevation Requests": lambda _r: page_access_elevation_requests(),
     }
-    if not can_access_page(role, page):
+    if not can_access_page(role, page, user_id):
         render_access_denied(page)
     else:
         handler = routes.get(page, page_dashboard)

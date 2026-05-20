@@ -4,9 +4,19 @@ from __future__ import annotations
 
 import copy
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from utils.datetime_utils import (
+    DEFAULT_TIMEZONE,
+    format_display_timestamp,
+    format_short_date,
+    format_time_only,
+    now_utc,
+    parse_utc,
+    to_user_tz,
+    utc_iso,
+)
 from utils.demo_incident import get_demo_incident_result
 
 _BASE = Path(__file__).resolve().parent.parent
@@ -43,9 +53,9 @@ DEMO_ANALYSTS = (
 )
 
 
-def can_access_page(role: str, page: str) -> bool:
+def can_access_page(role: str, page: str, user_id: str | None = None) -> bool:
     """Return True if the demo role may open this page (includes temporary elevation)."""
-    return can_access_page_with_elevation(role, page)
+    return can_access_page_with_elevation(role, page, user_id)
 
 
 def role_can_run_analysis(role: str) -> bool:
@@ -104,41 +114,70 @@ def compute_duration_string(
     return f"Open for {dur}"
 
 
-def format_incident_timestamps(dt: datetime | None = None) -> dict:
+def format_incident_timestamps(
+    dt: datetime | None = None,
+    *,
+    tz: str = DEFAULT_TIMEZONE,
+) -> dict:
     """
-    Local timestamps for incidents (seeded and live).
+    UTC-backed timestamps for incidents (seeded and live).
 
-    Returns created_date, created_day, created_time, created_display, created_at ISO,
-    last_updated fields, and open_for placeholder (refresh via refresh_incident_durations).
+    Returns created_at_utc, display fields in viewer timezone, and legacy created_at keys.
     """
-    now = dt or datetime.now()
-    created_date = now.strftime("%B %d, %Y")
-    if created_date.startswith("0"):
-        created_date = created_date.replace(" 0", " ", 1)
-    day = now.strftime("%A")
-    time_12h = now.strftime("%I:%M %p").lstrip("0")
-    iso_local = now.isoformat(timespec="seconds")
-    display = f"{created_date} · {time_12h}"
+    if dt is None:
+        dt = now_utc()
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    display = format_display_timestamp(dt, tz)
+    created_date = format_short_date(dt, tz)
+    local = to_user_tz(dt, tz)
+    day = local.strftime("%A") if local else "—"
+    time_12h = format_time_only(dt, tz)
+    iso_utc = utc_iso(dt)
     return {
-        "created_at": iso_local,
+        "created_at_utc": iso_utc,
+        "created_at": iso_utc,
         "created_date": created_date,
         "created_day": day,
         "created_time": time_12h,
         "created_display": display,
-        "last_updated": iso_local,
+        "last_updated_utc": iso_utc,
+        "last_updated": iso_utc,
         "last_updated_display": display,
         "open_for": "0m",
     }
 
 
-def _format_timeline_entry(dt: datetime) -> str:
-    return format_incident_timestamps(dt)["last_updated_display"]
+def enrich_incident_display_fields(incident: dict, tz: str = DEFAULT_TIMEZONE) -> None:
+    """Refresh human-readable timestamps from UTC fields for the active viewer."""
+    for field, display_key in (
+        ("created_at_utc", "created_display"),
+        ("last_updated_utc", "last_updated_display"),
+        ("resolved_date", "resolved_display"),
+    ):
+        raw = incident.get(field) or incident.get(field.replace("_utc", ""))
+        if raw:
+            incident[display_key] = format_display_timestamp(raw, tz)
+    created_raw = incident.get("created_at_utc") or incident.get("created_at")
+    if created_raw:
+        incident["created_date"] = format_short_date(created_raw, tz)
+        incident["created_time"] = format_time_only(created_raw, tz)
+        local = to_user_tz(created_raw, tz)
+        if local:
+            incident["created_day"] = local.strftime("%A")
+
+
+def _format_timeline_entry(dt: datetime, tz: str = DEFAULT_TIMEZONE) -> str:
+    return format_display_timestamp(dt, tz)
 
 
 def _apply_timeline_offsets(
     incident: dict,
     created_at: datetime,
     last_updated: datetime,
+    tz: str = DEFAULT_TIMEZONE,
 ) -> None:
     """Re-stamp audit / approval timeline entries relative to created_at → last_updated."""
     timeline = incident.get("audit_timeline") or []
@@ -147,19 +186,26 @@ def _apply_timeline_offsets(
         for i, entry in enumerate(timeline):
             frac = i / max(len(timeline) - 1, 1)
             t = created_at + timedelta(seconds=span * frac)
-            entry["time"] = _format_timeline_entry(t)
+            entry["time"] = _format_timeline_entry(t, tz)
     for hist in incident.get("approval_history") or []:
         if hist.get("status") == "pending":
-            hist["time"] = _format_timeline_entry(last_updated - timedelta(minutes=11))
+            hist["time"] = _format_timeline_entry(last_updated - timedelta(minutes=11), tz)
         elif hist.get("status") == "approved":
             hist["time"] = _format_timeline_entry(
-                last_updated - timedelta(minutes=45)
+                last_updated - timedelta(minutes=45), tz
             )
 
 
-def apply_dynamic_timestamps(incidents: list[dict], now: datetime | None = None) -> list[dict]:
-    """Overwrite static JSON dates with relative timestamps anchored at now."""
-    now = now or datetime.now()
+def apply_dynamic_timestamps(
+    incidents: list[dict],
+    now: datetime | None = None,
+    *,
+    tz: str = DEFAULT_TIMEZONE,
+) -> list[dict]:
+    """Overwrite static JSON dates with relative UTC timestamps anchored at now."""
+    now = now or now_utc()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     for idx, inc in enumerate(incidents):
         created_off = inc.pop("created_offset_minutes", None)
         last_off = inc.pop("last_updated_offset_minutes", None)
@@ -174,28 +220,27 @@ def apply_dynamic_timestamps(incidents: list[dict], now: datetime | None = None)
         if created_off is not None:
             created_at = now - timedelta(minutes=int(created_off))
         else:
-            raw = inc.get("created_at")
-            try:
-                created_at = datetime.fromisoformat(raw) if raw else now
-            except ValueError:
-                created_at = now
+            created_at = parse_utc(inc.get("created_at_utc") or inc.get("created_at")) or now
 
         if last_off is not None:
             last_updated = now - timedelta(minutes=int(last_off))
         else:
-            mid = created_at + (now - created_at) / 2
-            last_updated = mid
+            last_updated = parse_utc(inc.get("last_updated_utc") or inc.get("last_updated")) or (
+                created_at + (now - created_at) / 2
+            )
 
-        ts_created = format_incident_timestamps(created_at)
-        ts_last = format_incident_timestamps(last_updated)
+        ts_created = format_incident_timestamps(created_at, tz=tz)
+        ts_last = format_incident_timestamps(last_updated, tz=tz)
         inc.update(
             {
-                "created_at": ts_created["created_at"],
+                "created_at_utc": ts_created["created_at_utc"],
+                "created_at": ts_created["created_at_utc"],
                 "created_date": ts_created["created_date"],
                 "created_day": ts_created["created_day"],
                 "created_time": ts_created["created_time"],
                 "created_display": ts_created["created_display"],
-                "last_updated": ts_last["created_at"],
+                "last_updated_utc": ts_last["created_at_utc"],
+                "last_updated": ts_last["created_at_utc"],
                 "last_updated_display": ts_last["last_updated_display"],
             }
         )
@@ -207,8 +252,8 @@ def apply_dynamic_timestamps(incidents: list[dict], now: datetime | None = None)
                 if resolved_off is not None
                 else last_updated
             )
-            inc["resolved_date"] = resolved_at.isoformat(timespec="seconds")
-            inc["resolved_display"] = _format_timeline_entry(resolved_at)
+            inc["resolved_date"] = utc_iso(resolved_at)
+            inc["resolved_display"] = _format_timeline_entry(resolved_at, tz)
             inc["duration_open"] = compute_duration_string(
                 created_at, resolved_at, resolved=True
             )
@@ -225,60 +270,55 @@ def apply_dynamic_timestamps(incidents: list[dict], now: datetime | None = None)
         else:
             inc.pop("duration_review", None)
 
-        _apply_timeline_offsets(inc, created_at, last_updated)
+        _apply_timeline_offsets(inc, created_at, last_updated, tz)
     return incidents
 
 
-def refresh_incident_durations(incidents: list[dict], now: datetime | None = None) -> None:
-    """Recompute open_for / duration_review for display on each app run."""
-    now = now or datetime.now()
+def refresh_incident_durations(
+    incidents: list[dict],
+    now: datetime | None = None,
+    *,
+    tz: str = DEFAULT_TIMEZONE,
+) -> None:
+    """Recompute open_for / duration_review and display fields on each app run."""
+    now = now or now_utc()
     for inc in incidents:
-        raw_created = inc.get("created_at")
-        try:
-            created_at = (
-                datetime.fromisoformat(raw_created) if raw_created else now
-            )
-        except ValueError:
-            created_at = now
+        created_at = parse_utc(inc.get("created_at_utc") or inc.get("created_at")) or now
+        enrich_incident_display_fields(inc, tz)
         status = inc.get("status", "")
         if status == "RESOLVED" and inc.get("resolved_date"):
-            try:
-                end = datetime.fromisoformat(inc["resolved_date"])
-            except ValueError:
-                end = now
+            end = parse_utc(inc["resolved_date"]) or now
             inc["duration_open"] = compute_duration_string(
                 created_at, end, resolved=True
             )
         elif status == "BLOCKED":
-            try:
-                last = datetime.fromisoformat(inc.get("last_updated", ""))
-            except ValueError:
-                last = now
+            last = parse_utc(inc.get("last_updated_utc") or inc.get("last_updated")) or now
             inc["duration_open"] = compute_duration_string(
                 created_at, last, blocked=True
             )
         else:
             inc["duration_open"] = compute_duration_string(created_at, now)
         if status == "UNDER REVIEW" and inc.get("pending_rollback"):
-            try:
-                last = datetime.fromisoformat(inc.get("last_updated", ""))
-            except ValueError:
-                last = now
+            last = parse_utc(inc.get("last_updated_utc") or inc.get("last_updated")) or now
             review_mins = max(1, int((now - last).total_seconds() // 60))
             inc["duration_review"] = f"Under review for {review_mins}m"
 
 
-def seed_incidents_with_relative_times(incidents: list[dict] | None = None) -> list[dict]:
+def seed_incidents_with_relative_times(
+    incidents: list[dict] | None = None,
+    *,
+    tz: str = DEFAULT_TIMEZONE,
+) -> list[dict]:
     """Load template incidents and apply relative timestamps (demo init / login)."""
     if incidents is None:
         data = json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
         incidents = copy.deepcopy(data["incidents"])
-    return apply_dynamic_timestamps(incidents)
+    return apply_dynamic_timestamps(incidents, tz=tz)
 
 
-def load_incident_registry() -> list[dict]:
+def load_incident_registry(tz: str = DEFAULT_TIMEZONE) -> list[dict]:
     """Return demo incidents with relative timestamps applied from JSON offsets."""
-    return seed_incidents_with_relative_times()
+    return seed_incidents_with_relative_times(tz=tz)
 
 
 def filter_incidents_for_role(role: str, incidents: list[dict]) -> list[dict]:
@@ -989,10 +1029,16 @@ def create_standby_incident(
     }
 
 
-def queue_rows_for_role(role: str, incidents: list[dict]) -> list[dict]:
+def queue_rows_for_role(
+    role: str,
+    incidents: list[dict],
+    *,
+    tz: str = DEFAULT_TIMEZONE,
+) -> list[dict]:
     """Build role-specific queue table rows."""
     rows: list[dict] = []
     for inc in incidents:
+        enrich_incident_display_fields(inc, tz)
         if role == "SOC Analyst":
             rows.append(
                 {
