@@ -27,13 +27,13 @@ STATUS_TO_UI_KEY = {
     "BLOCKED": "blocked",
 }
 
-ALL_ROLES = (
-    "SOC Analyst",
-    "Incident Commander",
-    "Compliance Reviewer",
-    "SOC Manager",
-    "Observer",
+from utils.access_control import (
+    ALL_ROLES,
+    ROLE_PERMISSIONS,
+    allowed_roles_label,
+    can_access_page_with_elevation,
 )
+
 
 DEMO_ANALYSTS = (
     {"name": "Jordan Lee", "team": "SOC Analyst Team"},
@@ -42,47 +42,10 @@ DEMO_ANALYSTS = (
     {"name": "Morgan Blake", "team": "SOC Analyst Team"},
 )
 
-ROLE_PERMISSIONS: dict[str, list[str]] = {
-    "Dashboard": ["SOC Analyst", "SOC Manager", "Observer"],
-    "Active Operations": ["Incident Commander", "SOC Manager", "Compliance Reviewer"],
-    "Compliance Operations": ["Compliance Reviewer", "SOC Manager"],
-    "Agent Workflow": [
-        "SOC Analyst",
-        "Incident Commander",
-        "Compliance Reviewer",
-        "SOC Manager",
-        "Observer",
-    ],
-    "Logs & Evidence": [
-        "SOC Analyst",
-        "Incident Commander",
-        "Compliance Reviewer",
-        "SOC Manager",
-        "Observer",
-    ],
-    "Final Report": [
-        "SOC Analyst",
-        "Incident Commander",
-        "Compliance Reviewer",
-        "SOC Manager",
-    ],
-    "Compliance": ["Compliance Reviewer", "SOC Manager"],
-    "System Metrics": list(ALL_ROLES),
-    "SOC Command Center": ["SOC Manager", "Observer"],
-}
-
 
 def can_access_page(role: str, page: str) -> bool:
-    """Return True if the demo role may open this sidebar page."""
-    allowed = ROLE_PERMISSIONS.get(page)
-    if allowed is None:
-        return True
-    return role in allowed
-
-
-def allowed_roles_label(page: str) -> str:
-    """Comma-separated list of roles for access-denied messaging."""
-    return ", ".join(ROLE_PERMISSIONS.get(page, ALL_ROLES))
+    """Return True if the demo role may open this page (includes temporary elevation)."""
+    return can_access_page_with_elevation(role, page)
 
 
 def role_can_run_analysis(role: str) -> bool:

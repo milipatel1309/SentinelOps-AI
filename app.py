@@ -19,6 +19,20 @@ from utils.demo_incident import (
     get_preload_incident_id,
     should_preload_demo_for_role,
 )
+from utils.access_control import (
+    ELEVATION_DURATIONS,
+    ROLE_NAV_ITEMS,
+    approve_access_request,
+    base_can_access_page,
+    cleanup_expired_grants,
+    deny_access_request,
+    get_active_grant,
+    init_access_state,
+    minutes_until_expiry,
+    recent_platform_audit,
+    sidebar_nav_for_role,
+    submit_access_request,
+)
 from utils.incident_cases import (
     allowed_roles_label,
     analyst_activity_panel,
@@ -72,21 +86,12 @@ ROLE_DEFAULT_PAGE = {
     "Observer": "Dashboard",
 }
 
-BASE_SIDEBAR_NAV = [
-    ("Dashboard", "📊"),
-    ("Agent Workflow", "🔄"),
-    ("Logs & Evidence", "📋"),
-    ("Compliance", "🛡️"),
-    ("Final Report", "📄"),
-    ("System Metrics", "📊"),
-]
-
-ROLE_SIDEBAR_INSERT = {
-    "SOC Manager": ("SOC Command Center", "📡", 0),
-    "Observer": ("SOC Command Center", "📡", 0),
-    "Incident Commander": ("Active Operations", "🎯", 1),
-    "Compliance Reviewer": ("Compliance Operations", "📑", 4),
+# Sections analysts/commanders may open via dashboard launcher (hidden from sidebar).
+RESTRICTED_LAUNCH_SECTIONS: dict[str, list[str]] = {
+    "SOC Analyst": ["Compliance Operations", "SOC Command Center", "Active Operations"],
+    "Incident Commander": ["Compliance Operations", "Compliance", "SOC Command Center"],
 }
+
 ROLE_BADGE_LABELS = {
     "SOC Analyst": "SOC ANALYST",
     "Incident Commander": "INCIDENT COMMANDER",
@@ -1332,6 +1337,43 @@ CUSTOM_CSS = """
     [data-testid="stSidebar"][aria-expanded="false"] {
         display: none;
     }
+    .restricted-access-card {
+        background: linear-gradient(145deg, rgba(10, 22, 40, 0.95), rgba(7, 16, 28, 0.98));
+        border: 1px solid rgba(255, 159, 67, 0.45);
+        border-radius: 12px;
+        padding: 1.35rem 1.5rem;
+        margin: 1rem 0 1.5rem;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    }
+    .restricted-access-card h3 {
+        color: #ff9f43;
+        margin: 0 0 0.5rem;
+        font-size: 1.15rem;
+    }
+    .restricted-access-card p {
+        color: #b8d4e8;
+        margin: 0.35rem 0;
+        font-size: 0.92rem;
+    }
+    .temp-access-badge {
+        display: inline-block;
+        background: rgba(0, 212, 255, 0.14);
+        border: 1px solid rgba(0, 212, 255, 0.45);
+        color: #00e8ff;
+        font-size: 0.8rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 0.35rem 0.75rem;
+        border-radius: 6px;
+        margin-bottom: 1rem;
+    }
+    .elevation-audit-row {
+        font-size: 0.85rem;
+        color: #9ec9de;
+        padding: 0.4rem 0;
+        border-bottom: 1px solid rgba(30, 58, 95, 0.35);
+    }
 </style>
 """
 
@@ -1355,15 +1397,25 @@ def init_session() -> None:
             st.session_state[k] = v
     if "incidents" not in st.session_state:
         st.session_state.incidents = load_incident_registry()
+    init_access_state()
 
 
 def get_sidebar_nav(role: str) -> list[tuple[str, str]]:
-    nav = list(BASE_SIDEBAR_NAV)
-    insert = ROLE_SIDEBAR_INSERT.get(role)
-    if insert:
-        name, icon, idx = insert
-        if not any(n == name for n, _ in nav):
-            nav.insert(idx, (name, icon))
+    from utils.access_control import PAGE_NAV_ICONS, has_temporary_access
+
+    nav = list(sidebar_nav_for_role(role))
+    names = {n for n, _ in nav}
+    init_access_state()
+    for grant in st.session_state.temporary_grants:
+        if grant.get("role") != role:
+            continue
+        section = grant.get("section")
+        if section and section not in names and has_temporary_access(role, section):
+            nav.append((section, PAGE_NAV_ICONS.get(section, "🔒")))
+            names.add(section)
+    current = st.session_state.get("page")
+    if current and current not in names:
+        nav.append((current, PAGE_NAV_ICONS.get(current, "🔒")))
     return nav
 
 
@@ -1415,12 +1467,93 @@ def investigation_page_for_role(role: str) -> str:
     return "Agent Workflow"
 
 
+def render_temporary_access_badge(page: str) -> None:
+    """Show countdown when page access is via an approved temporary grant."""
+    role = get_demo_role()
+    if base_can_access_page(role, page):
+        return
+    grant = get_active_grant(role, page)
+    if not grant:
+        return
+    mins = minutes_until_expiry(grant)
+    st.markdown(
+        f'<span class="temp-access-badge">Temporary Access Active · expires in {mins} min</span>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_restricted_access_card(
+    current_role: str,
+    requested_section: str,
+    required_roles: str,
+    reason: str,
+) -> None:
+    st.markdown(
+        '<div class="restricted-access-card">'
+        "<h3>Restricted Access</h3>"
+        f"<p><strong>Section:</strong> {requested_section}</p>"
+        f"<p><strong>Your role:</strong> {current_role}</p>"
+        f"<p><strong>Authorized roles:</strong> {required_roles}</p>"
+        f"<p>{reason}</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    with st.expander("Request Temporary Access", expanded=True):
+        st.caption("SOC Manager will review duration and approve or deny.")
+        req_reason = st.text_area(
+            "Business justification",
+            placeholder="Why do you need temporary access to this section?",
+            key=f"elev_reason_{requested_section}",
+        )
+        duration = st.selectbox(
+            "Requested duration (minutes)",
+            ELEVATION_DURATIONS,
+            index=0,
+            key=f"elev_dur_{requested_section}",
+        )
+        incident_id = st.text_input(
+            "Incident ID (optional)",
+            value=st.session_state.get("selected_incident_id") or "",
+            key=f"elev_inc_{requested_section}",
+        )
+        if st.button("Request Temporary Access", type="primary", key=f"elev_submit_{requested_section}"):
+            if not req_reason.strip():
+                st.error("Please provide a justification.")
+            else:
+                row = submit_access_request(
+                    requester_role=current_role,
+                    section=requested_section,
+                    reason=req_reason,
+                    duration_minutes=int(duration),
+                    incident_id=incident_id.strip() or None,
+                )
+                st.success(
+                    f"Access elevation request **{row['request_id']}** submitted to SOC Manager."
+                )
+                st.rerun()
+
+
+def render_restricted_section_launcher(role: str) -> None:
+    """Demo helper: open a section not listed in sidebar to trigger elevation flow."""
+    targets = RESTRICTED_LAUNCH_SECTIONS.get(role, [])
+    if not targets:
+        return
+    with st.expander("Open restricted section (demo)", expanded=False):
+        st.caption("Sections hidden from your nav — opens restricted view to request elevation.")
+        choice = st.selectbox("Section", targets, key=f"restricted_launch_{role}")
+        if st.button("Go to section", key=f"restricted_go_{role}"):
+            st.session_state.page = choice
+            st.rerun()
+
+
 def render_access_denied(page: str) -> None:
     role = get_demo_role()
-    st.warning(
-        f"Access restricted for this role. This view is available to: {allowed_roles_label(page)}."
+    render_restricted_access_card(
+        role,
+        page,
+        allowed_roles_label(page),
+        "This workspace requires a different role or an approved temporary access grant.",
     )
-    st.caption(f"Signed in as **{role}**.")
 
 
 def add_incident_to_queue(title: str, incident_text: str) -> str:
@@ -1853,6 +1986,7 @@ def render_sidebar() -> str:
         st.session_state.incident_input = ""
         st.session_state.incident_running = False
         st.session_state.page = "Dashboard"
+        # Preserve elevation grants/requests across role switch (demo flow).
         st.rerun()
     return page
 
@@ -2529,6 +2663,7 @@ def page_active_operations(result: dict | None) -> None:
 
 def page_compliance_operations(result: dict | None) -> None:
     role = get_demo_role()
+    render_temporary_access_badge("Compliance Operations")
     render_demo_incident_banner()
     incidents = filter_incidents_for_role(role, st.session_state.incidents)
     st.markdown(
@@ -2557,15 +2692,107 @@ def page_compliance_operations(result: dict | None) -> None:
             st.markdown("#### Approval history")
             st.json(display_inc["approval_history"])
 
+    elev_audit = [
+        e
+        for e in recent_platform_audit(20)
+        if "access" in (e.get("event") or "") or "temporary" in (e.get("event") or "")
+    ]
+    if elev_audit:
+        st.markdown(_section_heading("Platform elevation audit", "⌘"), unsafe_allow_html=True)
+        for entry in elev_audit[:8]:
+            st.markdown(
+                f'`{entry.get("display")}` **{entry.get("event")}** — '
+                f'{entry.get("role")} / {entry.get("section")}: {entry.get("detail")}'
+            )
+
     if result:
         st.markdown(_section_heading("Investigation compliance output", "🛡"), unsafe_allow_html=True)
         st.json(result.get("compliance", {}))
+
+
+def page_access_elevation_requests() -> None:
+    """SOC Manager queue for temporary access approvals."""
+    role = get_demo_role()
+    st.markdown(
+        _section_heading("Access Elevation Requests", "🔐"),
+        unsafe_allow_html=True,
+    )
+    if role != "SOC Manager":
+        st.warning("SOC Manager role required to manage elevation requests.")
+        return
+
+    requests = list(st.session_state.get("access_requests", []))
+    pending = [r for r in requests if r.get("status") == "Pending"]
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Total requests", len(requests))
+    with c2:
+        st.metric("Pending", len(pending))
+    with c3:
+        active_grants = len(st.session_state.get("temporary_grants", []))
+        st.metric("Active grants", active_grants)
+
+    if not requests:
+        st.info("No access elevation requests yet. Analysts submit from restricted sections.")
+    else:
+        rows = []
+        for req in reversed(requests):
+            rows.append(
+                {
+                    "Request ID": req.get("request_id"),
+                    "Requester": req.get("requester_role"),
+                    "Section": req.get("requested_section"),
+                    "Incident ID": req.get("incident_id") or "—",
+                    "Reason": (req.get("reason") or "")[:80],
+                    "Duration (min)": req.get("requested_duration"),
+                    "Created": f"{req.get('created_date')} {req.get('created_time')}",
+                    "Status": req.get("status"),
+                }
+            )
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.markdown("#### Review pending requests")
+        for req in pending:
+            rid = req["request_id"]
+            st.markdown(
+                f"**{rid}** — {req.get('requester_role')} → **{req.get('requested_section')}** "
+                f"({req.get('requested_duration')} min)"
+            )
+            st.caption(req.get("reason", ""))
+            b1, b2, _ = st.columns([1, 1, 3])
+            with b1:
+                if st.button("Approve", key=f"appr_elev_{rid}", type="primary"):
+                    if approve_access_request(rid):
+                        st.success(f"Approved {rid}. Grant active for requester.")
+                        st.rerun()
+            with b2:
+                if st.button("Deny", key=f"deny_elev_{rid}"):
+                    if deny_access_request(rid):
+                        st.warning(f"Denied {rid}.")
+                        st.rerun()
+            st.markdown("---")
+
+    st.markdown(_section_heading("Platform audit — elevation", "⌘"), unsafe_allow_html=True)
+    audit = recent_platform_audit(15)
+    if not audit:
+        st.caption("No elevation audit events yet.")
+    else:
+        for entry in audit:
+            st.markdown(
+                f'<div class="elevation-audit-row">'
+                f'<strong>{entry.get("display")}</strong> · {entry.get("event")} · '
+                f'{entry.get("role")} · {entry.get("section")} — {entry.get("detail")}'
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
 
 def page_dashboard(result: dict | None) -> None:
     role = get_demo_role()
     render_demo_incident_banner()
     render_role_dashboard_callout(role)
+    render_restricted_section_launcher(role)
     if role in ("SOC Analyst", "SOC Manager", "Observer"):
         render_incident_queue_table(role)
     if role == "SOC Analyst":
@@ -3007,6 +3234,7 @@ def _render_severity_pie(labels: list[str], values: list[float]) -> None:
 
 def main() -> None:
     init_session()
+    cleanup_expired_grants()
     st.set_page_config(
         page_title="SentinelOps AI",
         page_icon="🛡️",
@@ -3034,11 +3262,16 @@ def main() -> None:
         "Compliance Operations": page_compliance_operations,
         "Final Report": page_report,
         "System Metrics": page_metrics,
+        "Access Elevation Requests": lambda _r: page_access_elevation_requests(),
     }
-    if not can_access_page(get_demo_role(), page):
+    role = get_demo_role()
+    if not can_access_page(role, page):
         render_access_denied(page)
     else:
-        routes.get(page, page_dashboard)(result)
+        handler = routes.get(page, page_dashboard)
+        if page != "Access Elevation Requests":
+            render_temporary_access_badge(page)
+        handler(result)
     render_footer()
 
 
