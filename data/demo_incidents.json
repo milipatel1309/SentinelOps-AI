@@ -5,16 +5,8 @@
       "title": "Payment API latency + failed logins",
       "status": "ACTIVE",
       "severity": "HIGH",
-      "created_date": "May 18, 2026",
-      "created_day": "Monday",
-      "created_time": "9:42 AM",
-      "created_display": "May 18, 2026 · 9:42 AM",
-      "last_updated": "2026-05-18T10:31:00",
-      "last_updated_display": "May 18, 2026 · 10:31 AM",
-      "resolved_date": null,
-      "resolved_display": null,
-      "duration_open": "Open for 2h 14m",
-      "duration_review": null,
+      "created_offset_minutes": 180,
+      "last_updated_offset_minutes": 109,
       "owner": "soc-analyst-01",
       "owner_role": "SOC Analyst",
       "assigned_team": "SOC Analyst Team",
@@ -42,14 +34,14 @@
       "auditor_notes": "Two remediation steps require commander approval before production execution.",
       "payload_key": "payment_api",
       "audit_timeline": [
-        {"time": "May 18, 2026 · 9:42 AM", "event": "Incident opened", "actor": "SOC Analyst"},
-        {"time": "May 18, 2026 · 9:55 AM", "event": "Automated triage completed", "actor": "IntakeAgent"},
-        {"time": "May 18, 2026 · 10:12 AM", "event": "RCA identified DB pool exhaustion", "actor": "RootCauseAgent"},
-        {"time": "May 18, 2026 · 10:31 AM", "event": "Remediation plan awaiting approval", "actor": "RemediationAgent"}
+        {"event": "Incident opened", "actor": "SOC Analyst"},
+        {"event": "Automated triage completed", "actor": "IntakeAgent"},
+        {"event": "RCA identified DB pool exhaustion", "actor": "RootCauseAgent"},
+        {"event": "Remediation plan awaiting approval", "actor": "RemediationAgent"}
       ],
       "policy_violations": [],
       "approval_history": [
-        {"time": "May 18, 2026 · 10:20 AM", "action": "Scale DB read replicas", "status": "pending", "approver": null}
+        {"action": "Scale DB read replicas", "status": "pending", "approver": null}
       ]
     },
     {
@@ -57,16 +49,8 @@
       "title": "AuthService outage after deployment",
       "status": "UNDER REVIEW",
       "severity": "CRITICAL",
-      "created_date": "May 18, 2026",
-      "created_day": "Monday",
-      "created_time": "7:15 AM",
-      "created_display": "May 18, 2026 · 7:15 AM",
-      "last_updated": "2026-05-18T11:05:00",
-      "last_updated_display": "May 18, 2026 · 11:05 AM",
-      "resolved_date": null,
-      "resolved_display": null,
-      "duration_open": "Open for 3h 50m",
-      "duration_review": "Under review for 35m",
+      "created_offset_minutes": 230,
+      "last_updated_offset_minutes": 35,
       "owner": "incident-commander-02",
       "owner_role": "Incident Commander",
       "assigned_team": "Command Center Alpha",
@@ -94,14 +78,14 @@
       "auditor_notes": "Rollback to v2.14.2 recommended; change advisory linked to deployment window policy.",
       "payload_key": "auth_outage",
       "audit_timeline": [
-        {"time": "May 18, 2026 · 7:15 AM", "event": "P1 incident declared", "actor": "SOC Analyst"},
-        {"time": "May 18, 2026 · 7:28 AM", "event": "Deployment v2.14.3 correlated", "actor": "LogAnalysisAgent"},
-        {"time": "May 18, 2026 · 10:30 AM", "event": "Escalated to Incident Commander", "actor": "System"},
-        {"time": "May 18, 2026 · 11:05 AM", "event": "Rollback pending approval", "actor": "Incident Commander"}
+        {"event": "P1 incident declared", "actor": "SOC Analyst"},
+        {"event": "Deployment v2.14.3 correlated", "actor": "LogAnalysisAgent"},
+        {"event": "Escalated to Incident Commander", "actor": "System"},
+        {"event": "Rollback pending approval", "actor": "Incident Commander"}
       ],
       "policy_violations": [],
       "approval_history": [
-        {"time": "May 18, 2026 · 11:00 AM", "action": "Rollback AuthService to v2.14.2", "status": "pending", "approver": null}
+        {"action": "Rollback AuthService to v2.14.2", "status": "pending", "approver": null}
       ]
     },
     {
@@ -109,16 +93,9 @@
       "title": "Suspicious privilege escalation attempt",
       "status": "RESOLVED",
       "severity": "HIGH",
-      "created_date": "May 17, 2026",
-      "created_day": "Sunday",
-      "created_time": "2:20 PM",
-      "created_display": "May 17, 2026 · 2:20 PM",
-      "last_updated": "2026-05-17T18:45:00",
-      "last_updated_display": "May 17, 2026 · 6:45 PM",
-      "resolved_date": "2026-05-17T18:45:00",
-      "resolved_display": "May 17, 2026 · 6:45 PM",
-      "duration_open": "Resolved after 4h 25m",
-      "duration_review": null,
+      "created_offset_minutes": 265,
+      "last_updated_offset_minutes": 15,
+      "resolved_offset_minutes": 15,
       "owner": "compliance-reviewer-01",
       "owner_role": "Compliance Reviewer",
       "assigned_team": "Governance & Audit",
@@ -135,13 +112,13 @@
       "auditor_notes": "No policy violations. Containment actions logged and verified by compliance.",
       "payload_key": "privilege_escalation",
       "audit_timeline": [
-        {"time": "May 17, 2026 · 2:20 PM", "event": "Security alert triaged", "actor": "SOC Analyst"},
-        {"time": "May 17, 2026 · 3:10 PM", "event": "Malicious IP blocked", "actor": "RemediationAgent"},
-        {"time": "May 17, 2026 · 6:45 PM", "event": "Incident resolved", "actor": "AuditorAgent"}
+        {"event": "Security alert triaged", "actor": "SOC Analyst"},
+        {"event": "Malicious IP blocked", "actor": "RemediationAgent"},
+        {"event": "Incident resolved", "actor": "AuditorAgent"}
       ],
       "policy_violations": [],
       "approval_history": [
-        {"time": "May 17, 2026 · 3:00 PM", "action": "Revoke elevated role", "status": "approved", "approver": "incident-commander-01"}
+        {"action": "Revoke elevated role", "status": "approved", "approver": "incident-commander-01"}
       ]
     },
     {
@@ -149,16 +126,8 @@
       "title": "Unsafe delete production database request",
       "status": "BLOCKED",
       "severity": "CRITICAL",
-      "created_date": "May 18, 2026",
-      "created_day": "Monday",
-      "created_time": "8:10 AM",
-      "created_display": "May 18, 2026 · 8:10 AM",
-      "last_updated": "2026-05-18T08:12:00",
-      "last_updated_display": "May 18, 2026 · 8:12 AM",
-      "resolved_date": null,
-      "resolved_display": null,
-      "duration_open": "Blocked after 2m",
-      "duration_review": null,
+      "created_offset_minutes": 122,
+      "last_updated_offset_minutes": 120,
       "owner": "soc-analyst-01",
       "owner_role": "SOC Analyst",
       "assigned_team": "SOC Analyst Team",
@@ -175,8 +144,8 @@
       "auditor_notes": "Guardrail blocked destructive intent. Mandatory security review logged.",
       "payload_key": "unsafe_delete",
       "audit_timeline": [
-        {"time": "May 18, 2026 · 8:10 AM", "event": "Incident submitted", "actor": "SOC Analyst"},
-        {"time": "May 18, 2026 · 8:12 AM", "event": "Guardrail blocked workflow", "actor": "IntakeAgent"}
+        {"event": "Incident submitted", "actor": "SOC Analyst"},
+        {"event": "Guardrail blocked workflow", "actor": "IntakeAgent"}
       ],
       "policy_violations": [
         "Destructive production action requested",
@@ -189,16 +158,8 @@
       "title": "Database CPU spike + checkout failures",
       "status": "ACTIVE",
       "severity": "CRITICAL",
-      "created_date": "May 18, 2026",
-      "created_day": "Monday",
-      "created_time": "11:20 AM",
-      "created_display": "May 18, 2026 · 11:20 AM",
-      "last_updated": "2026-05-18T12:08:00",
-      "last_updated_display": "May 18, 2026 · 12:08 PM",
-      "resolved_date": null,
-      "resolved_display": null,
-      "duration_open": "Open for 48m",
-      "duration_review": null,
+      "created_offset_minutes": 48,
+      "last_updated_offset_minutes": 12,
       "owner": "soc-analyst-02",
       "owner_role": "SOC Analyst",
       "assigned_team": "SOC Analyst Team",
@@ -226,13 +187,13 @@
       "auditor_notes": "Scale and query optimization steps pending dual approval.",
       "payload_key": "database_cpu",
       "audit_timeline": [
-        {"time": "May 18, 2026 · 11:20 AM", "event": "Incident opened", "actor": "SOC Analyst"},
-        {"time": "May 18, 2026 · 11:45 AM", "event": "CPU saturation confirmed", "actor": "LogAnalysisAgent"},
-        {"time": "May 18, 2026 · 12:08 PM", "event": "Remediation awaiting approval", "actor": "RemediationAgent"}
+        {"event": "Incident opened", "actor": "SOC Analyst"},
+        {"event": "CPU saturation confirmed", "actor": "LogAnalysisAgent"},
+        {"event": "Remediation awaiting approval", "actor": "RemediationAgent"}
       ],
       "policy_violations": [],
       "approval_history": [
-        {"time": "May 18, 2026 · 12:00 PM", "action": "Enable query throttling", "status": "pending", "approver": null}
+        {"action": "Enable query throttling", "status": "pending", "approver": null}
       ]
     }
   ]

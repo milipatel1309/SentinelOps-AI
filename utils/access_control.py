@@ -35,35 +35,24 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     "Access Elevation Requests": ["SOC Manager"],
 }
 
-# Role → sidebar page keys (filtered nav).
-ROLE_NAV_ITEMS: dict[str, list[str]] = {
-    "SOC Analyst": [
-        "Dashboard",
-        "Logs & Evidence",
-        "Agent Workflow",
-    ],
-    "Incident Commander": [
-        "Active Operations",
-        "Agent Workflow",
-    ],
-    "Compliance Reviewer": [
-        "Compliance Operations",
-        "Compliance",
-    ],
-    "Observer": [
-        "Dashboard",
-        "SOC Command Center",
-        "System Metrics",
-        "Final Report",
-    ],
-    "SOC Manager": [
-        "SOC Command Center",
-        "Access Elevation Requests",
-        "Compliance Operations",
-        "System Metrics",
-        "Final Report",
-    ],
-}
+# Unified sidebar — every role sees the full list (locked when not permitted).
+UNIFIED_SIDEBAR_NAV: list[str] = [
+    "Dashboard",
+    "Logs & Evidence",
+    "Agent Workflow",
+    "Compliance Operations",
+    "Compliance",
+    "Active Operations",
+    "SOC Command Center",
+    "Access Elevation Requests",
+    "System Metrics",
+    "Final Report",
+]
+
+# Legacy alias kept for imports; all roles use UNIFIED_SIDEBAR_NAV in the UI.
+ROLE_NAV_ITEMS: dict[str, list[str]] = {role: list(UNIFIED_SIDEBAR_NAV) for role in ALL_ROLES}
+
+ELEVATION_APPROVER_ROLE = "SOC Manager"
 
 PAGE_NAV_ICONS: dict[str, str] = {
     "Dashboard": "📊",
@@ -182,13 +171,29 @@ def allowed_roles_label(page: str) -> str:
 
 
 def nav_items_for_role(role: str) -> list[str]:
-    return list(ROLE_NAV_ITEMS.get(role, ROLE_NAV_ITEMS["SOC Analyst"]))
+    """Full navigation list for every role (visibility; access enforced separately)."""
+    return list(UNIFIED_SIDEBAR_NAV)
+
+
+def nav_lock_title(role: str, page: str) -> str:
+    """Tooltip for locked sidebar entries."""
+    if base_can_access_page(role, page):
+        return ""
+    if has_temporary_access(role, page):
+        return ""
+    if page == "Access Elevation Requests":
+        return "SOC Manager approval required"
+    return "Temporary access required"
+
+
+def is_nav_entry_locked(role: str, page: str) -> bool:
+    """True when the role cannot open the page without elevation."""
+    return not can_access_page_with_elevation(role, page)
 
 
 def sidebar_nav_for_role(role: str) -> list[tuple[str, str]]:
     """Ordered (page_name, icon) tuples for sidebar radio."""
-    items = nav_items_for_role(role)
-    return [(name, PAGE_NAV_ICONS.get(name, "◉")) for name in items]
+    return [(name, PAGE_NAV_ICONS.get(name, "◉")) for name in nav_items_for_role(role)]
 
 
 def get_active_grant(role: str, page: str) -> dict | None:
@@ -210,6 +215,25 @@ def minutes_until_expiry(grant: dict) -> int:
     if delta.total_seconds() <= 0:
         return 0
     return max(1, int((delta.total_seconds() + 59) // 60))
+
+
+def sidebar_nav_entry(role: str, page: str) -> dict[str, Any]:
+    """Metadata for one sidebar row."""
+    grant = get_active_grant(role, page)
+    locked = is_nav_entry_locked(role, page)
+    return {
+        "page": page,
+        "icon": PAGE_NAV_ICONS.get(page, "◉"),
+        "locked": locked,
+        "lock_title": nav_lock_title(role, page) if locked else "",
+        "has_grant": grant is not None,
+        "grant_minutes": minutes_until_expiry(grant) if grant else 0,
+    }
+
+
+def sidebar_nav_entries(role: str) -> list[dict[str, Any]]:
+    """Full sidebar metadata for render (unified list, per-row lock/grant state)."""
+    return [sidebar_nav_entry(role, page) for page in nav_items_for_role(role)]
 
 
 def append_platform_audit(

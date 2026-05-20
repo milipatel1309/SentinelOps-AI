@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from utils.demo_incident import get_demo_incident_result
@@ -74,10 +74,211 @@ def role_is_read_only_operations(role: str) -> bool:
     return role in ("Observer", "Compliance Reviewer")
 
 
+# Relative offsets (minutes before now) for seeded demo incidents — order matches JSON.
+_SEED_CREATED_OFFSETS_MINUTES = (180, 230, 265, 122, 48)
+_SEED_LAST_UPDATED_OFFSETS_MINUTES = (109, 35, 15, 120, 12)
+_SEED_RESOLVED_OFFSET_MINUTES = {2: 15}  # incident index -> minutes before now when resolved
+
+
+def compute_duration_string(
+    start: datetime,
+    end: datetime,
+    *,
+    resolved: bool = False,
+    blocked: bool = False,
+) -> str:
+    """Human-readable open/resolved duration between two timestamps."""
+    delta = end - start
+    if delta.total_seconds() < 0:
+        delta = timedelta(0)
+    total_mins = max(0, int(delta.total_seconds() // 60))
+    if total_mins < 60:
+        dur = f"{total_mins}m"
+    else:
+        hours, mins = divmod(total_mins, 60)
+        dur = f"{hours}h {mins}m" if mins else f"{hours}h"
+    if blocked:
+        return f"Blocked after {dur}"
+    if resolved:
+        return f"Resolved after {dur}"
+    return f"Open for {dur}"
+
+
+def format_incident_timestamps(dt: datetime | None = None) -> dict:
+    """
+    Local timestamps for incidents (seeded and live).
+
+    Returns created_date, created_day, created_time, created_display, created_at ISO,
+    last_updated fields, and open_for placeholder (refresh via refresh_incident_durations).
+    """
+    now = dt or datetime.now()
+    created_date = now.strftime("%B %d, %Y")
+    if created_date.startswith("0"):
+        created_date = created_date.replace(" 0", " ", 1)
+    day = now.strftime("%A")
+    time_12h = now.strftime("%I:%M %p").lstrip("0")
+    iso_local = now.isoformat(timespec="seconds")
+    display = f"{created_date} · {time_12h}"
+    return {
+        "created_at": iso_local,
+        "created_date": created_date,
+        "created_day": day,
+        "created_time": time_12h,
+        "created_display": display,
+        "last_updated": iso_local,
+        "last_updated_display": display,
+        "open_for": "0m",
+    }
+
+
+def _format_timeline_entry(dt: datetime) -> str:
+    return format_incident_timestamps(dt)["last_updated_display"]
+
+
+def _apply_timeline_offsets(
+    incident: dict,
+    created_at: datetime,
+    last_updated: datetime,
+) -> None:
+    """Re-stamp audit / approval timeline entries relative to created_at → last_updated."""
+    timeline = incident.get("audit_timeline") or []
+    if timeline:
+        span = max((last_updated - created_at).total_seconds(), 1.0)
+        for i, entry in enumerate(timeline):
+            frac = i / max(len(timeline) - 1, 1)
+            t = created_at + timedelta(seconds=span * frac)
+            entry["time"] = _format_timeline_entry(t)
+    for hist in incident.get("approval_history") or []:
+        if hist.get("status") == "pending":
+            hist["time"] = _format_timeline_entry(last_updated - timedelta(minutes=11))
+        elif hist.get("status") == "approved":
+            hist["time"] = _format_timeline_entry(
+                last_updated - timedelta(minutes=45)
+            )
+
+
+def apply_dynamic_timestamps(incidents: list[dict], now: datetime | None = None) -> list[dict]:
+    """Overwrite static JSON dates with relative timestamps anchored at now."""
+    now = now or datetime.now()
+    for idx, inc in enumerate(incidents):
+        created_off = inc.pop("created_offset_minutes", None)
+        last_off = inc.pop("last_updated_offset_minutes", None)
+        resolved_off = inc.pop("resolved_offset_minutes", None)
+        if created_off is None and idx < len(_SEED_CREATED_OFFSETS_MINUTES):
+            created_off = _SEED_CREATED_OFFSETS_MINUTES[idx]
+        if last_off is None and idx < len(_SEED_LAST_UPDATED_OFFSETS_MINUTES):
+            last_off = _SEED_LAST_UPDATED_OFFSETS_MINUTES[idx]
+        if resolved_off is None and idx in _SEED_RESOLVED_OFFSET_MINUTES:
+            resolved_off = _SEED_RESOLVED_OFFSET_MINUTES[idx]
+
+        if created_off is not None:
+            created_at = now - timedelta(minutes=int(created_off))
+        else:
+            raw = inc.get("created_at")
+            try:
+                created_at = datetime.fromisoformat(raw) if raw else now
+            except ValueError:
+                created_at = now
+
+        if last_off is not None:
+            last_updated = now - timedelta(minutes=int(last_off))
+        else:
+            mid = created_at + (now - created_at) / 2
+            last_updated = mid
+
+        ts_created = format_incident_timestamps(created_at)
+        ts_last = format_incident_timestamps(last_updated)
+        inc.update(
+            {
+                "created_at": ts_created["created_at"],
+                "created_date": ts_created["created_date"],
+                "created_day": ts_created["created_day"],
+                "created_time": ts_created["created_time"],
+                "created_display": ts_created["created_display"],
+                "last_updated": ts_last["created_at"],
+                "last_updated_display": ts_last["last_updated_display"],
+            }
+        )
+
+        status = inc.get("status", "")
+        if status == "RESOLVED":
+            resolved_at = (
+                now - timedelta(minutes=int(resolved_off))
+                if resolved_off is not None
+                else last_updated
+            )
+            inc["resolved_date"] = resolved_at.isoformat(timespec="seconds")
+            inc["resolved_display"] = _format_timeline_entry(resolved_at)
+            inc["duration_open"] = compute_duration_string(
+                created_at, resolved_at, resolved=True
+            )
+        elif status == "BLOCKED":
+            inc["duration_open"] = compute_duration_string(
+                created_at, last_updated, blocked=True
+            )
+        else:
+            inc["duration_open"] = compute_duration_string(created_at, now)
+
+        if status == "UNDER REVIEW" and inc.get("pending_rollback"):
+            review_mins = max(1, int((now - last_updated).total_seconds() // 60))
+            inc["duration_review"] = f"Under review for {review_mins}m"
+        else:
+            inc.pop("duration_review", None)
+
+        _apply_timeline_offsets(inc, created_at, last_updated)
+    return incidents
+
+
+def refresh_incident_durations(incidents: list[dict], now: datetime | None = None) -> None:
+    """Recompute open_for / duration_review for display on each app run."""
+    now = now or datetime.now()
+    for inc in incidents:
+        raw_created = inc.get("created_at")
+        try:
+            created_at = (
+                datetime.fromisoformat(raw_created) if raw_created else now
+            )
+        except ValueError:
+            created_at = now
+        status = inc.get("status", "")
+        if status == "RESOLVED" and inc.get("resolved_date"):
+            try:
+                end = datetime.fromisoformat(inc["resolved_date"])
+            except ValueError:
+                end = now
+            inc["duration_open"] = compute_duration_string(
+                created_at, end, resolved=True
+            )
+        elif status == "BLOCKED":
+            try:
+                last = datetime.fromisoformat(inc.get("last_updated", ""))
+            except ValueError:
+                last = now
+            inc["duration_open"] = compute_duration_string(
+                created_at, last, blocked=True
+            )
+        else:
+            inc["duration_open"] = compute_duration_string(created_at, now)
+        if status == "UNDER REVIEW" and inc.get("pending_rollback"):
+            try:
+                last = datetime.fromisoformat(inc.get("last_updated", ""))
+            except ValueError:
+                last = now
+            review_mins = max(1, int((now - last).total_seconds() // 60))
+            inc["duration_review"] = f"Under review for {review_mins}m"
+
+
+def seed_incidents_with_relative_times(incidents: list[dict] | None = None) -> list[dict]:
+    """Load template incidents and apply relative timestamps (demo init / login)."""
+    if incidents is None:
+        data = json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
+        incidents = copy.deepcopy(data["incidents"])
+    return apply_dynamic_timestamps(incidents)
+
+
 def load_incident_registry() -> list[dict]:
-    """Return deep copies of all demo incidents from JSON."""
-    data = json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
-    return copy.deepcopy(data["incidents"])
+    """Return demo incidents with relative timestamps applied from JSON offsets."""
+    return seed_incidents_with_relative_times()
 
 
 def filter_incidents_for_role(role: str, incidents: list[dict]) -> list[dict]:
@@ -122,32 +323,6 @@ def next_incident_id(incidents: list[dict]) -> str:
     return f"INC-2026-{max_num + 1:04d}"
 
 
-def format_incident_timestamps(dt: datetime | None = None) -> dict:
-    """
-  Local timestamps for live incidents.
-
-  Returns created_date (May 18, 2026), created_day (Monday), created_time (10:45 PM),
-  created_display, last_updated fields, and open_for duration string.
-  """
-    now = dt or datetime.now()
-    created_date = now.strftime("%B %d, %Y")
-    if created_date.startswith("0"):
-        created_date = created_date.replace(" 0", " ", 1)
-    day = now.strftime("%A")
-    time_12h = now.strftime("%I:%M %p").lstrip("0")
-    iso_local = now.isoformat(timespec="seconds")
-    display = f"{created_date} · {time_12h}"
-    return {
-        "created_date": created_date,
-        "created_day": day,
-        "created_time": time_12h,
-        "created_display": display,
-        "last_updated": iso_local,
-        "last_updated_display": display,
-        "open_for": "0m",
-    }
-
-
 def _title_from_text(incident_text: str) -> str:
     first = (incident_text or "").strip().split("\n")[0].strip()
     if not first:
@@ -188,6 +363,7 @@ def create_live_incident(
         "title": title,
         "status": "ACTIVE",
         "severity": "MEDIUM",
+        "created_at": ts["created_at"],
         "created_date": ts["created_date"],
         "created_day": ts["created_day"],
         "created_time": ts["created_time"],
@@ -196,7 +372,7 @@ def create_live_incident(
         "last_updated_display": ts["last_updated_display"],
         "resolved_date": None,
         "resolved_display": None,
-        "duration_open": ts["open_for"],
+        "duration_open": compute_duration_string(datetime.now(), datetime.now()),
         "duration_review": None,
         "owner": "soc-analyst-live",
         "owner_role": created_by,
@@ -775,6 +951,7 @@ def create_standby_incident(
         "title": title or "New incident",
         "status": "STANDBY",
         "severity": "MEDIUM",
+        "created_at": ts["created_at"],
         "created_date": ts["created_date"],
         "created_day": ts["created_day"],
         "created_time": ts["created_time"],
@@ -783,7 +960,7 @@ def create_standby_incident(
         "last_updated_display": ts["last_updated_display"],
         "resolved_date": None,
         "resolved_display": None,
-        "duration_open": ts["open_for"],
+        "duration_open": compute_duration_string(datetime.now(), datetime.now()),
         "duration_review": None,
         "owner": owner,
         "owner_role": created_by,

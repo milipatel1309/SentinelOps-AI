@@ -20,8 +20,8 @@ from utils.demo_incident import (
     should_preload_demo_for_role,
 )
 from utils.access_control import (
+    ELEVATION_APPROVER_ROLE,
     ELEVATION_DURATIONS,
-    ROLE_NAV_ITEMS,
     approve_access_request,
     base_can_access_page,
     cleanup_expired_grants,
@@ -30,7 +30,7 @@ from utils.access_control import (
     init_access_state,
     minutes_until_expiry,
     recent_platform_audit,
-    sidebar_nav_for_role,
+    sidebar_nav_entries,
     submit_access_request,
 )
 from utils.incident_cases import (
@@ -52,6 +52,7 @@ from utils.incident_cases import (
     get_pending_actions_for_manager,
     is_compliance_blocked,
     load_incident_registry,
+    refresh_incident_durations,
     manager_metrics,
     next_incident_id,
     open_incident_button_label,
@@ -1374,6 +1375,22 @@ CUSTOM_CSS = """
         padding: 0.4rem 0;
         border-bottom: 1px solid rgba(30, 58, 95, 0.35);
     }
+    [data-testid="stSidebar"] [data-testid="stRadio"] label.nav-locked,
+    [data-testid="stSidebar"] .nav-locked-hint {
+        opacity: 0.55;
+    }
+    .restricted-overlay-wrap {
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        min-height: 42vh;
+        padding: 2rem 1rem 3rem;
+    }
+    .restricted-overlay-wrap .restricted-access-card {
+        max-width: 520px;
+        width: 100%;
+        margin: 0;
+    }
 </style>
 """
 
@@ -1391,32 +1408,17 @@ def init_session() -> None:
         "demo_incident_preloaded": False,
         "selected_incident_id": None,
         "_open_investigation_id": None,
+        "show_restricted_for": None,
+        "restricted_page": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
     if "incidents" not in st.session_state:
         st.session_state.incidents = load_incident_registry()
+    else:
+        refresh_incident_durations(st.session_state.incidents)
     init_access_state()
-
-
-def get_sidebar_nav(role: str) -> list[tuple[str, str]]:
-    from utils.access_control import PAGE_NAV_ICONS, has_temporary_access
-
-    nav = list(sidebar_nav_for_role(role))
-    names = {n for n, _ in nav}
-    init_access_state()
-    for grant in st.session_state.temporary_grants:
-        if grant.get("role") != role:
-            continue
-        section = grant.get("section")
-        if section and section not in names and has_temporary_access(role, section):
-            nav.append((section, PAGE_NAV_ICONS.get(section, "🔒")))
-            names.add(section)
-    current = st.session_state.get("page")
-    if current and current not in names:
-        nav.append((current, PAGE_NAV_ICONS.get(current, "🔒")))
-    return nav
 
 
 def get_selected_incident() -> dict | None:
@@ -1477,9 +1479,14 @@ def render_temporary_access_badge(page: str) -> None:
         return
     mins = minutes_until_expiry(grant)
     st.markdown(
-        f'<span class="temp-access-badge">Temporary Access Active · expires in {mins} min</span>',
+        f'<span class="temp-access-badge">Temporary Access Active — {page} expires in {mins} minutes</span>',
         unsafe_allow_html=True,
     )
+
+
+def clear_restricted_overlay() -> None:
+    st.session_state.show_restricted_for = None
+    st.session_state.restricted_page = None
 
 
 def render_restricted_access_card(
@@ -1490,15 +1497,28 @@ def render_restricted_access_card(
 ) -> None:
     st.markdown(
         '<div class="restricted-access-card">'
-        "<h3>Restricted Access</h3>"
-        f"<p><strong>Section:</strong> {requested_section}</p>"
-        f"<p><strong>Your role:</strong> {current_role}</p>"
-        f"<p><strong>Authorized roles:</strong> {required_roles}</p>"
+        "<h3>Access Restricted</h3>"
+        "<p>Your current role does not have permission to open this section.</p>"
+        f"<p><strong>Current role:</strong> {current_role}</p>"
+        f"<p><strong>Requested section:</strong> {requested_section}</p>"
+        f"<p><strong>Required approval role:</strong> {ELEVATION_APPROVER_ROLE}</p>"
+        f"<p><strong>Estimated access scope:</strong> {required_roles}</p>"
         f"<p>{reason}</p>"
         "</div>",
         unsafe_allow_html=True,
     )
-    with st.expander("Request Temporary Access", expanded=True):
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Request Temporary Access", type="primary", key=f"open_elev_form_{requested_section}"):
+            st.session_state[f"_elev_form_open_{requested_section}"] = True
+            st.rerun()
+    with c2:
+        if st.button("Cancel", key=f"elev_cancel_{requested_section}"):
+            clear_restricted_overlay()
+            st.rerun()
+    if not st.session_state.get(f"_elev_form_open_{requested_section}"):
+        return
+    with st.expander("Temporary access request", expanded=True):
         st.caption("SOC Manager will review duration and approve or deny.")
         req_reason = st.text_area(
             "Business justification",
@@ -1527,6 +1547,8 @@ def render_restricted_access_card(
                     duration_minutes=int(duration),
                     incident_id=incident_id.strip() or None,
                 )
+                st.session_state[f"_elev_form_open_{requested_section}"] = False
+                clear_restricted_overlay()
                 st.success(
                     f"Access elevation request **{row['request_id']}** submitted to SOC Manager."
                 )
@@ -1534,15 +1556,16 @@ def render_restricted_access_card(
 
 
 def render_restricted_section_launcher(role: str) -> None:
-    """Demo helper: open a section not listed in sidebar to trigger elevation flow."""
+    """Demo helper: jump to a locked sidebar section to trigger elevation flow."""
     targets = RESTRICTED_LAUNCH_SECTIONS.get(role, [])
     if not targets:
         return
     with st.expander("Open restricted section (demo)", expanded=False):
-        st.caption("Sections hidden from your nav — opens restricted view to request elevation.")
+        st.caption("Locked sidebar sections — opens the access-restricted overlay without leaving your page.")
         choice = st.selectbox("Section", targets, key=f"restricted_launch_{role}")
         if st.button("Go to section", key=f"restricted_go_{role}"):
-            st.session_state.page = choice
+            st.session_state.show_restricted_for = choice
+            st.session_state.restricted_page = choice
             st.rerun()
 
 
@@ -1900,7 +1923,7 @@ def render_header() -> None:
 
 def render_sidebar() -> str:
     role = get_demo_role()
-    sidebar_nav = get_sidebar_nav(role)
+    nav_entries = sidebar_nav_entries(role)
     st.sidebar.markdown('<p class="sidebar-brand">SentinelOps AI</p>', unsafe_allow_html=True)
     st.sidebar.markdown(
         f'<p class="sidebar-role">Current Role: <strong>{role}</strong></p>',
@@ -1938,17 +1961,35 @@ def render_sidebar() -> str:
     if sel:
         st.sidebar.markdown(f"**Selected:** `{sel}`")
     st.sidebar.markdown('<p class="sidebar-section-label">Navigation</p>', unsafe_allow_html=True)
-    page_names = [name for name, _ in sidebar_nav]
-    labels = [f"{icon}  {name}" for name, icon in sidebar_nav]
-    if home_page in page_names:
-        labels = [
-            f"{'★ ' if name == home_page else ''}{icon}  {name}"
-            for name, icon in sidebar_nav
-        ]
+    page_names = [ent["page"] for ent in nav_entries]
+    labels: list[str] = []
+    locked_css_indices: list[int] = []
+    for idx, ent in enumerate(nav_entries, start=1):
+        name = ent["page"]
+        icon = ent["icon"]
+        home = "★ " if name == home_page else ""
+        if ent["locked"]:
+            locked_css_indices.append(idx)
+            labels.append(f"{home}🔒 {icon}  {name}")
+        elif ent["has_grant"] and not base_can_access_page(role, name):
+            labels.append(f"{home}{icon}  {name} · {ent['grant_minutes']}m")
+        else:
+            labels.append(f"{home}{icon}  {name}")
+    if locked_css_indices:
+        rules = "\n".join(
+            f'[data-testid="stSidebar"] [data-testid="stRadio"] label:nth-of-type({i}) '
+            "{ opacity: 0.55; }"
+            for i in locked_css_indices
+        )
+        st.sidebar.markdown(f"<style>{rules}</style>", unsafe_allow_html=True)
     page_labels = dict(zip(labels, page_names))
-    current_page = st.session_state.get("page", "Dashboard")
+    previous_page = st.session_state.get("page", home_page)
+    if st.session_state.get("show_restricted_for"):
+        display_page = previous_page
+    else:
+        display_page = previous_page if previous_page in page_names else home_page
     try:
-        nav_index = page_names.index(current_page)
+        nav_index = page_names.index(display_page)
     except ValueError:
         nav_index = 0
     choice = st.sidebar.radio(
@@ -1958,8 +1999,22 @@ def render_sidebar() -> str:
         label_visibility="collapsed",
         key="sidebar_nav_radio",
     )
-    page = page_labels[choice]
-    st.session_state.page = page
+    clicked_page = page_labels[choice]
+    if not can_access_page(role, clicked_page):
+        st.session_state.show_restricted_for = clicked_page
+        st.session_state.restricted_page = clicked_page
+        st.session_state.page = previous_page if previous_page in page_names else home_page
+    else:
+        clear_restricted_overlay()
+        st.session_state.page = clicked_page
+    for ent in nav_entries:
+        if ent["has_grant"] and not base_can_access_page(role, ent["page"]):
+            st.sidebar.markdown(
+                f'<p class="sidebar-nav-hint nav-locked-hint">🔓 {ent["page"]}: '
+                f'temporary access — {ent["grant_minutes"]} min left</p>',
+                unsafe_allow_html=True,
+            )
+    page = st.session_state.page
     st.sidebar.markdown("---")
     st.sidebar.markdown('<p class="sidebar-section-label">Session</p>', unsafe_allow_html=True)
     status = get_incident_status()
@@ -2710,6 +2765,62 @@ def page_compliance_operations(result: dict | None) -> None:
         st.json(result.get("compliance", {}))
 
 
+def render_access_requests_queue_section(*, can_review: bool) -> None:
+    """Access elevation queue table (manager dashboard + dedicated page)."""
+    st.markdown(_section_heading("Access Requests Queue", "🔐"), unsafe_allow_html=True)
+    requests = list(st.session_state.get("access_requests", []))
+    pending = [r for r in requests if r.get("status") == "Pending"]
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Total requests", len(requests))
+    with c2:
+        st.metric("Pending", len(pending))
+    with c3:
+        st.metric("Active grants", len(st.session_state.get("temporary_grants", [])))
+    if not requests:
+        st.info("No access elevation requests yet. Submit from a locked sidebar section.")
+        return
+    rows = []
+    for req in reversed(requests):
+        rows.append(
+            {
+                "Request ID": req.get("request_id"),
+                "Requester": req.get("requester_role"),
+                "Section": req.get("requested_section"),
+                "Incident ID": req.get("incident_id") or "—",
+                "Reason": (req.get("reason") or "")[:120],
+                "Duration (min)": req.get("requested_duration"),
+                "Created": f"{req.get('created_date')} {req.get('created_time')}",
+                "Status": req.get("status"),
+                "Approved by": req.get("approved_by") or "—",
+                "Expires at": req.get("expires_at") or "—",
+            }
+        )
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    if not can_review or not pending:
+        return
+    st.markdown("#### Review pending requests")
+    for req in pending:
+        rid = req["request_id"]
+        st.markdown(
+            f"**{rid}** — {req.get('requester_role')} → **{req.get('requested_section')}** "
+            f"({req.get('requested_duration')} min)"
+        )
+        st.caption(req.get("reason", ""))
+        b1, b2, _ = st.columns([1, 1, 3])
+        with b1:
+            if st.button("Approve", key=f"appr_elev_cc_{rid}", type="primary"):
+                if approve_access_request(rid):
+                    st.success(f"Approved {rid}.")
+                    st.rerun()
+        with b2:
+            if st.button("Deny", key=f"deny_elev_cc_{rid}"):
+                if deny_access_request(rid):
+                    st.warning(f"Denied {rid}.")
+                    st.rerun()
+        st.markdown("---")
+
+
 def page_access_elevation_requests() -> None:
     """SOC Manager queue for temporary access approvals."""
     role = get_demo_role()
@@ -2721,57 +2832,7 @@ def page_access_elevation_requests() -> None:
         st.warning("SOC Manager role required to manage elevation requests.")
         return
 
-    requests = list(st.session_state.get("access_requests", []))
-    pending = [r for r in requests if r.get("status") == "Pending"]
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("Total requests", len(requests))
-    with c2:
-        st.metric("Pending", len(pending))
-    with c3:
-        active_grants = len(st.session_state.get("temporary_grants", []))
-        st.metric("Active grants", active_grants)
-
-    if not requests:
-        st.info("No access elevation requests yet. Analysts submit from restricted sections.")
-    else:
-        rows = []
-        for req in reversed(requests):
-            rows.append(
-                {
-                    "Request ID": req.get("request_id"),
-                    "Requester": req.get("requester_role"),
-                    "Section": req.get("requested_section"),
-                    "Incident ID": req.get("incident_id") or "—",
-                    "Reason": (req.get("reason") or "")[:80],
-                    "Duration (min)": req.get("requested_duration"),
-                    "Created": f"{req.get('created_date')} {req.get('created_time')}",
-                    "Status": req.get("status"),
-                }
-            )
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-        st.markdown("---")
-        st.markdown("#### Review pending requests")
-        for req in pending:
-            rid = req["request_id"]
-            st.markdown(
-                f"**{rid}** — {req.get('requester_role')} → **{req.get('requested_section')}** "
-                f"({req.get('requested_duration')} min)"
-            )
-            st.caption(req.get("reason", ""))
-            b1, b2, _ = st.columns([1, 1, 3])
-            with b1:
-                if st.button("Approve", key=f"appr_elev_{rid}", type="primary"):
-                    if approve_access_request(rid):
-                        st.success(f"Approved {rid}. Grant active for requester.")
-                        st.rerun()
-            with b2:
-                if st.button("Deny", key=f"deny_elev_{rid}"):
-                    if deny_access_request(rid):
-                        st.warning(f"Denied {rid}.")
-                        st.rerun()
-            st.markdown("---")
+    render_access_requests_queue_section(can_review=(role == "SOC Manager"))
 
     st.markdown(_section_heading("Platform audit — elevation", "⌘"), unsafe_allow_html=True)
     audit = recent_platform_audit(15)
@@ -2984,6 +3045,9 @@ def page_soc_command_center(result: dict | None) -> None:
         st.metric("Resolved", metrics["resolved_count"])
 
     render_manager_approval_queue(can_act)
+
+    if role == "SOC Manager":
+        render_access_requests_queue_section(can_review=True)
 
     st.markdown(_section_heading("Analyst activity", "👥"), unsafe_allow_html=True)
     activity = analyst_activity_panel(incidents)
@@ -3248,9 +3312,23 @@ def main() -> None:
 
     process_pending_investigation_open()
     apply_role_landing()
+    refresh_incident_durations(st.session_state.incidents)
     result = st.session_state.get("result")
     render_header()
     page = render_sidebar()
+    role = get_demo_role()
+    restricted = st.session_state.get("show_restricted_for")
+    if restricted and not can_access_page(role, restricted):
+        st.markdown('<div class="restricted-overlay-wrap">', unsafe_allow_html=True)
+        render_restricted_access_card(
+            role,
+            restricted,
+            allowed_roles_label(restricted),
+            "Temporary access can be requested below; SOC Manager approves time-boxed elevation.",
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+        render_footer()
+        return
 
     routes = {
         "Dashboard": page_dashboard,
@@ -3264,7 +3342,6 @@ def main() -> None:
         "System Metrics": page_metrics,
         "Access Elevation Requests": lambda _r: page_access_elevation_requests(),
     }
-    role = get_demo_role()
     if not can_access_page(role, page):
         render_access_denied(page)
     else:
