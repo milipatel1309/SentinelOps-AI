@@ -21,15 +21,18 @@ from utils.demo_incident import (
 )
 from utils.access_control import (
     ELEVATION_APPROVER_ROLE,
-    ELEVATION_DURATIONS,
     approve_access_request,
     base_can_access_page,
     cleanup_expired_grants,
     deny_access_request,
     get_active_grant,
+    get_scheduled_grant,
     init_access_state,
+    list_access_requests,
     minutes_until_expiry,
+    minutes_until_start,
     recent_platform_audit,
+    render_access_request_form,
     sidebar_nav_entries,
     submit_access_request,
 )
@@ -1369,6 +1372,19 @@ CUSTOM_CSS = """
         border-radius: 6px;
         margin-bottom: 1rem;
     }
+    .scheduled-access-badge {
+        display: inline-block;
+        background: rgba(255, 159, 67, 0.12);
+        border: 1px solid rgba(255, 159, 67, 0.45);
+        color: #ff9f43;
+        font-size: 0.8rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 0.35rem 0.75rem;
+        border-radius: 6px;
+        margin-bottom: 1rem;
+    }
     .elevation-audit-row {
         font-size: 0.85rem;
         color: #9ec9de;
@@ -1474,6 +1490,14 @@ def render_temporary_access_badge(page: str) -> None:
     role = get_demo_role()
     if base_can_access_page(role, page):
         return
+    scheduled = get_scheduled_grant(role, page)
+    if scheduled:
+        mins = minutes_until_start(scheduled)
+        st.markdown(
+            f'<span class="scheduled-access-badge">Scheduled Access — {page} starts in {mins} minutes</span>',
+            unsafe_allow_html=True,
+        )
+        return
     grant = get_active_grant(role, page)
     if not grant:
         return
@@ -1495,6 +1519,14 @@ def render_restricted_access_card(
     required_roles: str,
     reason: str,
 ) -> None:
+    scheduled = get_scheduled_grant(current_role, requested_section)
+    if scheduled:
+        mins = minutes_until_start(scheduled)
+        st.markdown(
+            f'<span class="scheduled-access-badge">Scheduled Access — {requested_section} '
+            f"starts in {mins} minutes</span>",
+            unsafe_allow_html=True,
+        )
     st.markdown(
         '<div class="restricted-access-card">'
         "<h3>Access Restricted</h3>"
@@ -1519,38 +1551,35 @@ def render_restricted_access_card(
     if not st.session_state.get(f"_elev_form_open_{requested_section}"):
         return
     with st.expander("Temporary access request", expanded=True):
-        st.caption("SOC Manager will review duration and approve or deny.")
         req_reason = st.text_area(
             "Business justification",
             placeholder="Why do you need temporary access to this section?",
             key=f"elev_reason_{requested_section}",
         )
-        duration = st.selectbox(
-            "Requested duration (minutes)",
-            ELEVATION_DURATIONS,
-            index=0,
-            key=f"elev_dur_{requested_section}",
-        )
+        window = render_access_request_form(requested_section, key_prefix=f"elev_{requested_section}")
         incident_id = st.text_input(
             "Incident ID (optional)",
             value=st.session_state.get("selected_incident_id") or "",
             key=f"elev_inc_{requested_section}",
         )
-        if st.button("Request Temporary Access", type="primary", key=f"elev_submit_{requested_section}"):
+        if st.button("Submit access request", type="primary", key=f"elev_submit_{requested_section}"):
             if not req_reason.strip():
                 st.error("Please provide a justification.")
+            elif window.get("validation_error"):
+                st.error(window["validation_error"])
             else:
                 row = submit_access_request(
                     requester_role=current_role,
                     section=requested_section,
                     reason=req_reason,
-                    duration_minutes=int(duration),
+                    window=window,
                     incident_id=incident_id.strip() or None,
                 )
                 st.session_state[f"_elev_form_open_{requested_section}"] = False
                 clear_restricted_overlay()
                 st.success(
-                    f"Access elevation request **{row['request_id']}** submitted to SOC Manager."
+                    f"Access elevation request **{row['request_id']}** submitted to SOC Manager. "
+                    f"{row.get('window_preview', '')}"
                 )
                 st.rerun()
 
@@ -1972,7 +2001,8 @@ def render_sidebar() -> str:
             locked_css_indices.append(idx)
             labels.append(f"{home}🔒 {icon}  {name}")
         elif ent["has_grant"] and not base_can_access_page(role, name):
-            labels.append(f"{home}{icon}  {name} · {ent['grant_minutes']}m")
+            hint = ent.get("grant_hint") or f"{ent['grant_minutes']}m"
+            labels.append(f"{home}{icon}  {name} · {hint}")
         else:
             labels.append(f"{home}{icon}  {name}")
     if locked_css_indices:
@@ -2009,9 +2039,11 @@ def render_sidebar() -> str:
         st.session_state.page = clicked_page
     for ent in nav_entries:
         if ent["has_grant"] and not base_can_access_page(role, ent["page"]):
+            hint = ent.get("grant_hint") or f"{ent['grant_minutes']} min left"
+            label = "scheduled" if ent.get("grant_scheduled") else "temporary access"
             st.sidebar.markdown(
                 f'<p class="sidebar-nav-hint nav-locked-hint">🔓 {ent["page"]}: '
-                f'temporary access — {ent["grant_minutes"]} min left</p>',
+                f"{label} — {hint}</p>",
                 unsafe_allow_html=True,
             )
     page = st.session_state.page
@@ -2750,7 +2782,9 @@ def page_compliance_operations(result: dict | None) -> None:
     elev_audit = [
         e
         for e in recent_platform_audit(20)
-        if "access" in (e.get("event") or "") or "temporary" in (e.get("event") or "")
+        if "access" in (e.get("event") or "")
+        or "temporary" in (e.get("event") or "")
+        or (e.get("event") or "") in ("access_expired", "access_activated")
     ]
     if elev_audit:
         st.markdown(_section_heading("Platform elevation audit", "⌘"), unsafe_allow_html=True)
@@ -2768,7 +2802,7 @@ def page_compliance_operations(result: dict | None) -> None:
 def render_access_requests_queue_section(*, can_review: bool) -> None:
     """Access elevation queue table (manager dashboard + dedicated page)."""
     st.markdown(_section_heading("Access Requests Queue", "🔐"), unsafe_allow_html=True)
-    requests = list(st.session_state.get("access_requests", []))
+    requests = list_access_requests()
     pending = [r for r in requests if r.get("status") == "Pending"]
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -2785,15 +2819,22 @@ def render_access_requests_queue_section(*, can_review: bool) -> None:
         rows.append(
             {
                 "Request ID": req.get("request_id"),
-                "Requester": req.get("requester_role"),
-                "Section": req.get("requested_section"),
-                "Incident ID": req.get("incident_id") or "—",
+                "Requested By (role)": req.get("requester_role"),
+                "Requested Section": req.get("requested_section"),
                 "Reason": (req.get("reason") or "")[:120],
-                "Duration (min)": req.get("requested_duration"),
-                "Created": f"{req.get('created_date')} {req.get('created_time')}",
+                "Start (date)": req.get("start_date") or "—",
+                "Start (time)": req.get("start_time") or req.get("start_display", "—"),
+                "Start (tz)": req.get("start_timezone") or "—",
+                "End (date)": req.get("end_date") or "—",
+                "End (time)": req.get("end_time") or req.get("end_display", "—"),
+                "End (tz)": req.get("end_timezone") or "—",
+                "Calculated Duration": req.get("calculated_duration_display")
+                or f"{req.get('calculated_duration_minutes', req.get('requested_duration', '—'))} min",
+                "Created Timestamp": req.get("created_timestamp")
+                or f"{req.get('created_date', '')} {req.get('created_time', '')}".strip(),
                 "Status": req.get("status"),
-                "Approved by": req.get("approved_by") or "—",
-                "Expires at": req.get("expires_at") or "—",
+                "Approve": "—",
+                "Deny": "—",
             }
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
@@ -2803,8 +2844,8 @@ def render_access_requests_queue_section(*, can_review: bool) -> None:
     for req in pending:
         rid = req["request_id"]
         st.markdown(
-            f"**{rid}** — {req.get('requester_role')} → **{req.get('requested_section')}** "
-            f"({req.get('requested_duration')} min)"
+            f"**{rid}** — {req.get('requester_role')} → **{req.get('requested_section')}** · "
+            f"{req.get('window_preview') or req.get('calculated_duration_display', '')}"
         )
         st.caption(req.get("reason", ""))
         b1, b2, _ = st.columns([1, 1, 3])
@@ -3324,7 +3365,7 @@ def main() -> None:
             role,
             restricted,
             allowed_roles_label(restricted),
-            "Temporary access can be requested below; SOC Manager approves time-boxed elevation.",
+            "Temporary access can be requested below; SOC Manager approves a scheduled access window.",
         )
         st.markdown("</div>", unsafe_allow_html=True)
         render_footer()
