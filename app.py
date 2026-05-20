@@ -73,7 +73,7 @@ from utils.incident_cases import (
 from utils.datetime_utils import PROFILE_TIMEZONES, DEFAULT_TIMEZONE
 from utils.llm_client import get_llm_status
 from utils.user_profiles import (
-    LOGIN_HINT,
+    DEMO_ACCOUNTS_HTML,
     create_profile,
     get_current_role,
     get_current_user,
@@ -1292,20 +1292,55 @@ CUSTOM_CSS = """
         margin: 0.55rem 0 0;
         max-width: 22rem;
     }
-    .demo-login-hint {
-        text-align: center;
-        font-size: 0.8rem;
-        color: #5a8fad;
+    .demo-accounts-card {
         margin-top: 1.1rem;
-        font-style: italic;
+        padding: 0.85rem 0.95rem;
+        background: linear-gradient(145deg, rgba(8, 20, 36, 0.92), rgba(6, 14, 26, 0.96));
+        border: 1px solid rgba(0, 212, 255, 0.22);
+        border-radius: 10px;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
     }
-    .demo-login-hint code {
+    .demo-accounts-title {
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #5a8fad;
+        margin-bottom: 0.55rem;
+        text-align: center;
+    }
+    .demo-accounts-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.74rem;
+        color: #8eb9d0;
+    }
+    .demo-accounts-table th {
+        text-align: left;
+        font-weight: 600;
+        color: #5a8fad;
+        padding: 0.35rem 0.4rem 0.45rem;
+        border-bottom: 1px solid rgba(0, 212, 255, 0.15);
+        font-size: 0.68rem;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+    }
+    .demo-accounts-table td {
+        padding: 0.38rem 0.4rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        vertical-align: middle;
+    }
+    .demo-accounts-table tr:last-child td {
+        border-bottom: none;
+    }
+    .demo-accounts-table code {
         color: #00d4ff;
         background: rgba(0, 212, 255, 0.1);
-        padding: 0.12rem 0.4rem;
+        padding: 0.1rem 0.35rem;
         border-radius: 4px;
         font-family: 'IBM Plex Mono', monospace;
-        font-style: normal;
+        font-size: 0.72rem;
+        white-space: nowrap;
     }
     @media (max-height: 768px) {
         [data-testid="column"]:has(.demo-login-panel) {
@@ -1334,9 +1369,12 @@ CUSTOM_CSS = """
             font-size: 0.88rem;
             margin-top: 0.35rem;
         }
-        .demo-login-hint {
-            font-size: 0.74rem;
+        .demo-accounts-card {
             margin-top: 0.65rem;
+            padding: 0.7rem 0.8rem;
+        }
+        .demo-accounts-table {
+            font-size: 0.68rem;
         }
         .stApp:has(.demo-login-wrap) .stButton > button[kind="primary"] {
             min-height: 2.85rem !important;
@@ -1921,7 +1959,7 @@ def render_demo_login() -> None:
                     st.rerun()
                 else:
                     st.error("Invalid username or password.")
-            st.markdown(f'<p class="demo-login-hint">{LOGIN_HINT}</p>', unsafe_allow_html=True)
+            st.markdown(DEMO_ACCOUNTS_HTML, unsafe_allow_html=True)
         with tab_create:
             full_name = st.text_input("Full name", key="create_full_name")
             new_username = st.text_input("Username", key="create_username")

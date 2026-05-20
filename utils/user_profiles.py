@@ -17,7 +17,7 @@ SEED_USERS: list[dict[str, Any]] = [
         "username": "jordan.analyst",
         "password": "analyst123",
         "role": "SOC Analyst",
-        "department": "SOC Tier 1",
+        "department": "SOC Operations",
         "created_at_utc": "2026-05-01T12:00:00+00:00",
         "timezone": "America/New_York",
     },
@@ -27,9 +27,9 @@ SEED_USERS: list[dict[str, Any]] = [
         "username": "sam.manager",
         "password": "manager123",
         "role": "SOC Manager",
-        "department": "SOC Leadership",
+        "department": "Security Operations",
         "created_at_utc": "2026-05-01T12:00:00+00:00",
-        "timezone": "America/Chicago",
+        "timezone": "America/New_York",
     },
     {
         "user_id": "USR-003",
@@ -37,16 +37,55 @@ SEED_USERS: list[dict[str, Any]] = [
         "username": "morgan.compliance",
         "password": "compliance123",
         "role": "Compliance Reviewer",
-        "department": "GRC",
+        "department": "Governance & Risk",
         "created_at_utc": "2026-05-01T12:00:00+00:00",
-        "timezone": "UTC",
+        "timezone": "America/New_York",
+    },
+    {
+        "user_id": "USR-004",
+        "full_name": "Alex Chen",
+        "username": "alex.commander",
+        "password": "commander123",
+        "role": "Incident Commander",
+        "department": "Incident Response",
+        "created_at_utc": "2026-05-01T12:00:00+00:00",
+        "timezone": "America/New_York",
+    },
+    {
+        "user_id": "USR-005",
+        "full_name": "Taylor Brooks",
+        "username": "taylor.observer",
+        "password": "observer123",
+        "role": "Observer",
+        "department": "Security Operations",
+        "created_at_utc": "2026-05-01T12:00:00+00:00",
+        "timezone": "America/New_York",
     },
 ]
 
-LOGIN_HINT = (
-    "Demo logins: **jordan.analyst** / analyst123 · "
-    "**sam.manager** / manager123 · **morgan.compliance** / compliance123"
-)
+
+def seed_demo_users() -> list[dict[str, Any]]:
+    """Return a copy of the built-in demo user seed list."""
+    return [dict(u) for u in SEED_USERS]
+
+
+def _demo_accounts_html() -> str:
+    rows = "".join(
+        f"<tr><td>{u['role']}</td>"
+        f"<td><code>{u['username']}</code></td>"
+        f"<td><code>{u['password']}</code></td></tr>"
+        for u in SEED_USERS
+    )
+    return (
+        '<div class="demo-accounts-card">'
+        '<div class="demo-accounts-title">Demo accounts</div>'
+        '<table class="demo-accounts-table">'
+        "<thead><tr><th>Role</th><th>Username</th><th>Password</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>"
+    )
+
+
+DEMO_ACCOUNTS_HTML = _demo_accounts_html()
 
 
 def _next_user_id() -> str:
