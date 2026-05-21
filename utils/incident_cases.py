@@ -7,6 +7,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pandas as pd
+
 from utils.datetime_utils import (
     DEFAULT_TIMEZONE,
     format_display_timestamp,
@@ -196,6 +198,189 @@ def _apply_timeline_offsets(
             )
 
 
+# Fallback templates when JSON omits signal_trends (offset minutes from created_at_utc).
+_SEED_SIGNAL_TREND_OFFSETS: dict[str, list[dict]] = {
+    "INC-001": [
+        {"offset_minutes": 0, "metric": "latency_ms", "value": 420, "signal": "PaymentAPI"},
+        {"offset_minutes": 6, "metric": "latency_ms", "value": 510, "signal": "PaymentAPI"},
+        {"offset_minutes": 12, "metric": "latency_ms", "value": 620, "signal": "PaymentAPI"},
+        {"offset_minutes": 18, "metric": "latency_ms", "value": 740, "signal": "PaymentAPI"},
+        {"offset_minutes": 24, "metric": "latency_ms", "value": 850, "signal": "PaymentAPI"},
+        {"offset_minutes": 30, "metric": "latency_ms", "value": 920, "signal": "PaymentAPI"},
+        {"offset_minutes": 36, "metric": "latency_ms", "value": 880, "signal": "PaymentAPI"},
+        {"offset_minutes": 42, "metric": "latency_ms", "value": 810, "signal": "PaymentAPI"},
+        {"offset_minutes": 20, "metric": "failed_logins", "value": 4, "signal": "AuthService"},
+        {"offset_minutes": 28, "metric": "failed_logins", "value": 18, "signal": "AuthService"},
+        {"offset_minutes": 35, "metric": "failed_logins", "value": 42, "signal": "AuthService"},
+        {"offset_minutes": 44, "metric": "failed_logins", "value": 36, "signal": "AuthService"},
+    ],
+    "INC-002": [
+        {"offset_minutes": 0, "metric": "error_rate_pct", "value": 2.1, "signal": "AuthService"},
+        {"offset_minutes": 7, "metric": "error_rate_pct", "value": 8.4, "signal": "AuthService"},
+        {"offset_minutes": 14, "metric": "error_rate_pct", "value": 24.6, "signal": "AuthService"},
+        {"offset_minutes": 21, "metric": "error_rate_pct", "value": 41.2, "signal": "AuthService"},
+        {"offset_minutes": 28, "metric": "error_rate_pct", "value": 58.0, "signal": "AuthService"},
+        {"offset_minutes": 35, "metric": "pod_restart_count", "value": 3, "signal": "AuthService"},
+        {"offset_minutes": 42, "metric": "pod_restart_count", "value": 11, "signal": "AuthService"},
+        {"offset_minutes": 48, "metric": "health_check_failures", "value": 4, "signal": "IdentityGateway"},
+        {"offset_minutes": 52, "metric": "health_check_failures", "value": 9, "signal": "IdentityGateway"},
+        {"offset_minutes": 58, "metric": "health_check_failures", "value": 12, "signal": "IdentityGateway"},
+    ],
+    "INC-005": [
+        {"offset_minutes": 0, "metric": "cpu_pct", "value": 55, "signal": "DatabaseCluster"},
+        {"offset_minutes": 5, "metric": "cpu_pct", "value": 62, "signal": "DatabaseCluster"},
+        {"offset_minutes": 10, "metric": "cpu_pct", "value": 71, "signal": "DatabaseCluster"},
+        {"offset_minutes": 15, "metric": "cpu_pct", "value": 82, "signal": "DatabaseCluster"},
+        {"offset_minutes": 20, "metric": "cpu_pct", "value": 91, "signal": "DatabaseCluster"},
+        {"offset_minutes": 25, "metric": "cpu_pct", "value": 94, "signal": "DatabaseCluster"},
+        {"offset_minutes": 30, "metric": "cpu_pct", "value": 89, "signal": "DatabaseCluster"},
+        {"offset_minutes": 12, "metric": "checkout_errors", "value": 2, "signal": "CheckoutService"},
+        {"offset_minutes": 18, "metric": "checkout_errors", "value": 9, "signal": "CheckoutService"},
+        {"offset_minutes": 24, "metric": "checkout_errors", "value": 24, "signal": "CheckoutService"},
+        {"offset_minutes": 32, "metric": "checkout_errors", "value": 31, "signal": "CheckoutService"},
+        {"offset_minutes": 38, "metric": "checkout_errors", "value": 27, "signal": "CheckoutService"},
+    ],
+}
+
+
+def materialize_incident_signal_trends(incident: dict, created_at: datetime) -> None:
+    """Convert offset-based or template signal_trends into anchored UTC timestamps."""
+    raw = incident.get("signal_trends")
+    if not raw:
+        tpl = _SEED_SIGNAL_TREND_OFFSETS.get(incident.get("incident_id", ""))
+        if not tpl:
+            return
+        raw = tpl
+    points: list[dict] = []
+    for pt in raw:
+        if "offset_minutes" in pt:
+            ts = created_at + timedelta(minutes=int(pt["offset_minutes"]))
+        else:
+            ts = parse_utc(pt.get("timestamp_utc"))
+            if ts is None:
+                continue
+        points.append(
+            {
+                "timestamp_utc": utc_iso(ts),
+                "metric": pt["metric"],
+                "value": float(pt.get("value", 0)),
+                "signal": pt.get("signal", ""),
+            }
+        )
+    incident["signal_trends"] = sorted(points, key=lambda p: p["timestamp_utc"])
+
+
+def generate_signal_trends_from_result(
+    result: dict,
+    incident: dict | None = None,
+) -> list[dict]:
+    """Build 6–10 trend points from analysis time backward 30–60 minutes."""
+    now = now_utc()
+    n_points = 8
+    span_mins = 45
+    intake = result.get("intake", {}) or {}
+    services = list(intake.get("affected_services") or [])
+    anomalies = result.get("log_analysis", {}).get("anomalies") or []
+    risk = float(result.get("auditor", {}).get("risk_score") or 50)
+    payload_key = (incident or {}).get("payload_key", "")
+
+    metric_by_payload = {
+        "payment_api": ("latency_ms", "PaymentAPI"),
+        "auth_outage": ("error_rate_pct", "AuthService"),
+        "database_cpu": ("cpu_pct", "DatabaseCluster"),
+    }
+    primary_metric, primary_signal = metric_by_payload.get(
+        payload_key,
+        ("anomaly_count", services[0] if services else "Platform"),
+    )
+
+    points: list[dict] = []
+    base = 25 + (int(risk) % 30)
+    for i in range(n_points):
+        frac = i / max(n_points - 1, 1)
+        ts = now - timedelta(minutes=int(span_mins * (1 - frac)))
+        if anomalies and i < len(anomalies):
+            anomaly = anomalies[i % len(anomalies)]
+            signal = anomaly.get("service") or primary_signal
+            metric = anomaly.get("metric") or primary_metric
+            val = float(
+                anomaly.get("count")
+                or anomaly.get("value")
+                or base + i * 9
+            )
+        else:
+            signal = primary_signal
+            metric = primary_metric
+            val = base + (risk * 0.45) * (frac**1.5) + (i % 3) * 12
+        points.append(
+            {
+                "timestamp_utc": utc_iso(ts),
+                "metric": metric,
+                "value": round(val, 1),
+                "signal": signal,
+            }
+        )
+
+    if len(services) > 1:
+        secondary = services[1]
+        sec_metric = (
+            "failed_logins"
+            if "Auth" in secondary or "auth" in secondary.lower()
+            else "checkout_errors"
+        )
+        for j, idx in enumerate((max(0, n_points - 4), n_points - 1)):
+            frac = idx / max(n_points - 1, 1)
+            ts = now - timedelta(minutes=int(span_mins * (1 - frac)))
+            points.append(
+                {
+                    "timestamp_utc": utc_iso(ts),
+                    "metric": sec_metric,
+                    "value": round(6 + j * 16 + risk * 0.12, 1),
+                    "signal": secondary,
+                }
+            )
+
+    return sorted(points, key=lambda p: p["timestamp_utc"])
+
+
+def get_incident_trend_series(
+    incident_id: str,
+    incidents: list[dict],
+    user_tz: str = DEFAULT_TIMEZONE,
+) -> pd.DataFrame:
+    """Return trend points as a DataFrame with viewer-local timestamps."""
+    inc = get_incident_by_id(incidents, incident_id)
+    if not inc:
+        return pd.DataFrame()
+    trends = inc.get("signal_trends") or []
+    if not trends:
+        return pd.DataFrame()
+    rows: list[dict] = []
+    for pt in trends:
+        ts = parse_utc(pt.get("timestamp_utc"))
+        if ts is None:
+            continue
+        local = to_user_tz(ts, user_tz)
+        if local is None:
+            continue
+        metric = pt.get("metric", "value")
+        signal = pt.get("signal", "")
+        rows.append(
+            {
+                "timestamp": local,
+                "timestamp_utc": pt.get("timestamp_utc"),
+                "timestamp_display": format_display_timestamp(ts, user_tz),
+                "metric": metric,
+                "value": float(pt.get("value", 0)),
+                "signal": signal,
+                "series_label": f"{signal} · {metric}" if signal else metric,
+            }
+        )
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).sort_values("timestamp")
+
+
 def apply_dynamic_timestamps(
     incidents: list[dict],
     now: datetime | None = None,
@@ -271,6 +456,7 @@ def apply_dynamic_timestamps(
             inc.pop("duration_review", None)
 
         _apply_timeline_offsets(inc, created_at, last_updated, tz)
+        materialize_incident_signal_trends(inc, created_at)
     return incidents
 
 
@@ -488,6 +674,7 @@ def apply_result_to_incident(incident: dict, result: dict) -> None:
             "actor": "SentinelOrchestrator",
         }
     )
+    incident["signal_trends"] = generate_signal_trends_from_result(result, incident)
 
 
 def _ensure_pending_actions(incident: dict) -> list[dict]:

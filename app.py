@@ -52,6 +52,7 @@ from utils.incident_cases import (
     filter_incidents_by_title,
     filter_incidents_for_role,
     get_incident_by_id,
+    get_incident_trend_series,
     get_payload_for_incident,
     get_pending_actions_for_manager,
     is_compliance_blocked,
@@ -1061,6 +1062,32 @@ CUSTOM_CSS = """
     [data-testid="stVerticalBlock"]:has(.metrics-panel) [data-testid="stPyplotGlobal"] {
         max-height: 200px;
         overflow: hidden;
+    }
+    .trend-empty-state {
+        background: rgba(7, 16, 24, 0.92);
+        border: 1px dashed #1e4d6b;
+        border-radius: 10px;
+        padding: 2rem 1.5rem;
+        margin: 0.25rem 0 1rem;
+        text-align: center;
+    }
+    .trend-empty-title {
+        color: #c5e8f7;
+        font-size: 0.95rem;
+        margin: 0 0 0.45rem;
+        font-weight: 600;
+    }
+    .trend-empty-hint {
+        color: #7eb8d4;
+        font-size: 0.82rem;
+        margin: 0;
+    }
+    .chart-container.trend-chart-wrap [data-testid="stPyplotGlobal"] {
+        min-height: 280px;
+        max-height: 320px;
+    }
+    .chart-container.trend-chart-wrap [data-testid="stPyplotGlobal"] img {
+        max-height: 300px;
     }
     [data-testid="stPyplotGlobal"] img {
         max-height: 180px;
@@ -3307,6 +3334,100 @@ def page_report(result: dict | None) -> None:
         st.error("Workflow blocked — remediation was not generated or executed.")
 
 
+def _render_trend_empty_state() -> None:
+    st.markdown(
+        """
+        <div class="trend-empty-state">
+            <p class="trend-empty-title">No incident trend telemetry available for this case.</p>
+            <p class="trend-empty-hint">Run analysis or select another incident to generate signal trends.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_trend_line_chart(df: pd.DataFrame) -> None:
+    """Dark-theme line chart for incident signal trends (matplotlib)."""
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(10, 3.0))
+    fig.patch.set_facecolor("#0a1628")
+    ax.set_facecolor("#0a1628")
+    line_colors = ["#00d4ff", "#00a8cc", "#7ee8ff", "#4dd0e1", "#5ce1e6"]
+    for i, (label, group) in enumerate(df.groupby("series_label")):
+        color = line_colors[i % len(line_colors)]
+        sorted_g = group.sort_values("timestamp")
+        ax.plot(
+            sorted_g["timestamp"],
+            sorted_g["value"],
+            color=color,
+            linewidth=2.2,
+            marker="o",
+            markersize=4,
+            label=label,
+        )
+
+    def _hover_format(x, y):
+        if x is None or y is None:
+            return ""
+        try:
+            ts = mdates.num2date(x)
+            return f"{ts.strftime('%I:%M %p')} · {y:.1f}"
+        except (TypeError, ValueError):
+            return f"{y:.1f}"
+
+    ax.format_coord = _hover_format
+    ax.set_xlabel("Time", color="#e8f4fc", fontsize=8)
+    ax.set_ylabel("Signal value", color="#e8f4fc", fontsize=8)
+    ax.tick_params(axis="x", colors="#c5e8f7", labelsize=7)
+    ax.tick_params(axis="y", colors="#c5e8f7", labelsize=7)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%I:%M %p"))
+    fig.autofmt_xdate(rotation=24, ha="right")
+    for spine in ax.spines.values():
+        spine.set_color("#1e3a5f")
+    ax.grid(True, color="#1e3a5f", alpha=0.35, linewidth=0.6)
+    ax.legend(
+        loc="upper left",
+        fontsize=7,
+        frameon=False,
+        labelcolor="#e8f4fc",
+    )
+    fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.22)
+    st.markdown('<div class="chart-container trend-chart-wrap">', unsafe_allow_html=True)
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_incident_signal_trends(
+    incident: dict | None,
+    current_user: dict | None,
+) -> None:
+    """Incident Signal Trends — per-case telemetry or professional empty state."""
+    st.markdown(
+        '<div class="chart-container"><h4>Incident Signal Trends</h4></div>',
+        unsafe_allow_html=True,
+    )
+    if not incident or not incident.get("incident_id"):
+        _render_trend_empty_state()
+        return
+
+    user_tz = (current_user or {}).get("timezone") or get_user_timezone()
+    trend_df = get_incident_trend_series(
+        incident["incident_id"],
+        st.session_state.incidents,
+        user_tz,
+    )
+    if trend_df.empty:
+        _render_trend_empty_state()
+        return
+
+    title = incident.get("title") or incident["incident_id"]
+    st.caption(f"{incident['incident_id']} — {title}")
+    _render_trend_line_chart(trend_df)
+
+
 def page_metrics(result: dict | None) -> None:
     st.markdown(_section_heading("System Metrics", "◉"), unsafe_allow_html=True)
     cloud = pd.read_csv(BASE_DIR / "data" / "cloud_logs.csv")
@@ -3372,22 +3493,7 @@ def page_metrics(result: dict | None) -> None:
         pie_vals = [float(v) for v in dist.values()]
         _render_severity_pie(pie_labels, pie_vals)
 
-    st.markdown('<div class="chart-container"><h4>Incident Signal Trends</h4></div>', unsafe_allow_html=True)
-    trend = cloud.copy()
-    trend["timestamp"] = pd.to_datetime(trend["timestamp"])
-    trend["hour"] = trend["timestamp"].dt.floor("h")
-    hourly = (
-        trend[trend["status"].isin(["WARN", "CRITICAL", "ERROR"])]
-        .groupby("hour")
-        .size()
-        .reset_index(name="signals")
-    )
-    if hourly.empty:
-        hourly = pd.DataFrame(
-            {"hour": pd.date_range("2026-05-18 14:00", periods=6, freq="h"), "signals": [2, 5, 8, 12, 9, 6]}
-        )
-    area_df = hourly.set_index("hour")[["signals"]]
-    st.area_chart(area_df, color="#00d4ff")
+    render_incident_signal_trends(get_selected_incident(), get_current_user())
 
 
 def _render_severity_pie(labels: list[str], values: list[float]) -> None:

@@ -42,6 +42,20 @@
       "policy_violations": [],
       "approval_history": [
         {"action": "Scale DB read replicas", "status": "pending", "approver": null}
+      ],
+      "signal_trends": [
+        {"offset_minutes": 0, "metric": "latency_ms", "value": 420, "signal": "PaymentAPI"},
+        {"offset_minutes": 6, "metric": "latency_ms", "value": 510, "signal": "PaymentAPI"},
+        {"offset_minutes": 12, "metric": "latency_ms", "value": 620, "signal": "PaymentAPI"},
+        {"offset_minutes": 18, "metric": "latency_ms", "value": 740, "signal": "PaymentAPI"},
+        {"offset_minutes": 24, "metric": "latency_ms", "value": 850, "signal": "PaymentAPI"},
+        {"offset_minutes": 30, "metric": "latency_ms", "value": 920, "signal": "PaymentAPI"},
+        {"offset_minutes": 36, "metric": "latency_ms", "value": 880, "signal": "PaymentAPI"},
+        {"offset_minutes": 42, "metric": "latency_ms", "value": 810, "signal": "PaymentAPI"},
+        {"offset_minutes": 20, "metric": "failed_logins", "value": 4, "signal": "AuthService"},
+        {"offset_minutes": 28, "metric": "failed_logins", "value": 18, "signal": "AuthService"},
+        {"offset_minutes": 35, "metric": "failed_logins", "value": 42, "signal": "AuthService"},
+        {"offset_minutes": 44, "metric": "failed_logins", "value": 36, "signal": "AuthService"}
       ]
     },
     {
@@ -86,6 +100,18 @@
       "policy_violations": [],
       "approval_history": [
         {"action": "Rollback AuthService to v2.14.2", "status": "pending", "approver": null}
+      ],
+      "signal_trends": [
+        {"offset_minutes": 0, "metric": "error_rate_pct", "value": 2.1, "signal": "AuthService"},
+        {"offset_minutes": 7, "metric": "error_rate_pct", "value": 8.4, "signal": "AuthService"},
+        {"offset_minutes": 14, "metric": "error_rate_pct", "value": 24.6, "signal": "AuthService"},
+        {"offset_minutes": 21, "metric": "error_rate_pct", "value": 41.2, "signal": "AuthService"},
+        {"offset_minutes": 28, "metric": "error_rate_pct", "value": 58.0, "signal": "AuthService"},
+        {"offset_minutes": 35, "metric": "pod_restart_count", "value": 3, "signal": "AuthService"},
+        {"offset_minutes": 42, "metric": "pod_restart_count", "value": 11, "signal": "AuthService"},
+        {"offset_minutes": 48, "metric": "health_check_failures", "value": 4, "signal": "IdentityGateway"},
+        {"offset_minutes": 52, "metric": "health_check_failures", "value": 9, "signal": "IdentityGateway"},
+        {"offset_minutes": 58, "metric": "health_check_failures", "value": 12, "signal": "IdentityGateway"}
       ]
     },
     {
@@ -194,6 +220,20 @@
       "policy_violations": [],
       "approval_history": [
         {"action": "Enable query throttling", "status": "pending", "approver": null}
+      ],
+      "signal_trends": [
+        {"offset_minutes": 0, "metric": "cpu_pct", "value": 55, "signal": "DatabaseCluster"},
+        {"offset_minutes": 5, "metric": "cpu_pct", "value": 62, "signal": "DatabaseCluster"},
+        {"offset_minutes": 10, "metric": "cpu_pct", "value": 71, "signal": "DatabaseCluster"},
+        {"offset_minutes": 15, "metric": "cpu_pct", "value": 82, "signal": "DatabaseCluster"},
+        {"offset_minutes": 20, "metric": "cpu_pct", "value": 91, "signal": "DatabaseCluster"},
+        {"offset_minutes": 25, "metric": "cpu_pct", "value": 94, "signal": "DatabaseCluster"},
+        {"offset_minutes": 30, "metric": "cpu_pct", "value": 89, "signal": "DatabaseCluster"},
+        {"offset_minutes": 12, "metric": "checkout_errors", "value": 2, "signal": "CheckoutService"},
+        {"offset_minutes": 18, "metric": "checkout_errors", "value": 9, "signal": "CheckoutService"},
+        {"offset_minutes": 24, "metric": "checkout_errors", "value": 24, "signal": "CheckoutService"},
+        {"offset_minutes": 32, "metric": "checkout_errors", "value": 31, "signal": "CheckoutService"},
+        {"offset_minutes": 38, "metric": "checkout_errors", "value": 27, "signal": "CheckoutService"}
       ]
     }
   ]
