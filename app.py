@@ -3428,6 +3428,41 @@ def render_incident_signal_trends(
     _render_trend_line_chart(trend_df)
 
 
+_SEVERITY_PIE_ORDER = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "BLOCKED")
+
+
+def get_visible_incidents_for_user(current_user: dict | None) -> list[dict]:
+    """Incidents in the current user's role-filtered dashboard queue."""
+    role = (current_user or {}).get("role") or get_demo_role()
+    incidents = st.session_state.get("incidents") or []
+    return filter_incidents_for_role(role, incidents)
+
+
+def _normalize_incident_severity(raw: str | None) -> str:
+    s = (raw or "MEDIUM").strip().upper()
+    if s in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+        return s
+    return "MEDIUM"
+
+
+def _incident_counts_as_blocked(inc: dict) -> bool:
+    status = (inc.get("status") or "").strip().upper()
+    if status in ("BLOCKED", "POLICY_BLOCKED"):
+        return True
+    return (inc.get("compliance_result") or "").strip().upper() == "BLOCKED"
+
+
+def get_severity_distribution(incidents: list[dict]) -> dict[str, int]:
+    """Aggregate severity counts; BLOCKED status as its own slice."""
+    counts = {k: 0 for k in _SEVERITY_PIE_ORDER}
+    for inc in incidents:
+        if _incident_counts_as_blocked(inc):
+            counts["BLOCKED"] += 1
+        else:
+            counts[_normalize_incident_severity(inc.get("severity"))] += 1
+    return {k: v for k, v in counts.items() if v > 0}
+
+
 def page_metrics(result: dict | None) -> None:
     st.markdown(_section_heading("System Metrics", "◉"), unsafe_allow_html=True)
     cloud = pd.read_csv(BASE_DIR / "data" / "cloud_logs.csv")
@@ -3480,63 +3515,79 @@ def page_metrics(result: dict | None) -> None:
         st.bar_chart(bar_df, color="#00a8cc")
 
     with col_b:
-        st.markdown('<div class="chart-container"><h4><span class="hdr-icon">⚠</span> Incident Severity Distribution</h4></div>', unsafe_allow_html=True)
-        if result:
-            sev = result.get("intake", {}).get("severity", "MEDIUM")
-            dist = {sev: 1}
-            for a in result.get("log_analysis", {}).get("anomalies", []):
-                s = a.get("status") or a.get("severity") or "WARN"
-                dist[s] = dist.get(s, 0) + 1
+        st.markdown(
+            '<div class="chart-container"><h4><span class="hdr-icon">⚠</span> Incident Severity Distribution</h4></div>',
+            unsafe_allow_html=True,
+        )
+        st.caption("Across visible incidents")
+        visible = get_visible_incidents_for_user(get_current_user())
+        dist = get_severity_distribution(visible)
+        total = sum(dist.values())
+        if total == 0:
+            st.markdown(
+                '<div class="trend-empty-state">'
+                '<p class="trend-empty-title">No incident severity data available.</p>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
         else:
-            dist = cloud["status"].value_counts().to_dict()
-        pie_labels = list(dist.keys())
-        pie_vals = [float(v) for v in dist.values()]
-        _render_severity_pie(pie_labels, pie_vals)
+            _render_severity_pie(dist, total)
 
     render_incident_signal_trends(get_selected_incident(), get_current_user())
 
 
-def _render_severity_pie(labels: list[str], values: list[float]) -> None:
+def _render_severity_pie(dist: dict[str, int], total: int) -> None:
+    labels = [k for k in _SEVERITY_PIE_ORDER if dist.get(k, 0) > 0]
+    values = [dist[k] for k in labels]
     try:
         import matplotlib.pyplot as plt
 
         colors = {
             "CRITICAL": "#ff4d6d",
             "HIGH": "#ff9f43",
-            "WARN": "#ffd93d",
-            "ERROR": "#ff6b81",
-            "MEDIUM": "#00a8cc",
-            "OK": "#6bcb77",
-            "LOW": "#7eb8d4",
+            "MEDIUM": "#00d4ff",
+            "LOW": "#6bcb77",
+            "BLOCKED": "#8b5cf6",
         }
-        fig, ax = plt.subplots(figsize=(4.0, 2.75))
+        fig_h = 300 / 96
+        fig, ax = plt.subplots(figsize=(4.5, fig_h))
         fig.patch.set_facecolor("#0a1628")
         ax.set_facecolor("#0a1628")
         pie_colors = [colors.get(lbl, "#1e4d6b") for lbl in labels]
-        wedges, _, autotexts = ax.pie(
+        wedges, _ = ax.pie(
             values,
-            autopct="%1.0f%%",
             colors=pie_colors,
             startangle=90,
-            pctdistance=0.68,
-            textprops={"color": "#e8f4fc", "fontsize": 7},
+            wedgeprops={"width": 0.55, "edgecolor": "#0a1628", "linewidth": 1.5},
         )
+        case_label = "case" if total == 1 else "cases"
+        ax.text(
+            0,
+            0,
+            f"{total}\n{case_label}",
+            ha="center",
+            va="center",
+            fontsize=9,
+            color="#e8f4fc",
+            fontweight="600",
+            linespacing=1.15,
+        )
+        legend_labels = [f"{lbl} ({dist[lbl]})" for lbl in labels]
         ax.legend(
             wedges,
-            labels,
+            legend_labels,
             loc="center left",
             bbox_to_anchor=(1.02, 0.5),
             fontsize=7,
             frameon=False,
             labelcolor="#c5e8f7",
         )
-        for autotext in autotexts:
-            autotext.set_fontsize(7)
         fig.subplots_adjust(left=0.02, right=0.68, top=0.98, bottom=0.05)
         st.pyplot(fig, use_container_width=True)
         plt.close(fig)
     except ImportError:
-        st.bar_chart(pd.DataFrame({"count": values}, index=labels), color="#00d4ff")
+        bar_df = pd.DataFrame({"count": values}, index=labels)
+        st.bar_chart(bar_df, color="#00d4ff")
 
 
 def main() -> None:
