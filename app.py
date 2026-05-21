@@ -11,8 +11,9 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from agents import SentinelOrchestrator
+from orchestrator import SentinelOrchestrator
 from utils.agent_metadata import PIPELINE_AGENTS, build_pipeline_status
+from utils.guardrails import validate_llm_output
 from utils.demo_incident import (
     DEMO_INCIDENT_TEXT,
     get_demo_incident_result,
@@ -933,6 +934,44 @@ CUSTOM_CSS = """
         margin: 0 0 1.25rem;
         line-height: 1.55;
     }
+    .orchestration-card {
+        background: rgba(0, 212, 255, 0.06);
+        border: 1px solid #1e4d6b;
+        border-radius: 10px;
+        padding: 0.65rem 1rem;
+        margin: 0 0 0.85rem;
+        font-size: 0.82rem;
+        color: #9ec8de;
+        line-height: 1.45;
+    }
+    .trust-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin: 0 0 0.75rem;
+    }
+    .trust-badge {
+        display: inline-block;
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 0.2rem 0.55rem;
+        border-radius: 6px;
+        border: 1px solid #2a6f8f;
+        color: #7ee0ff;
+        background: rgba(0, 180, 220, 0.1);
+    }
+    .trust-badge.synthetic {
+        border-color: #3d5a73;
+        color: #8eb9d0;
+        background: rgba(61, 90, 115, 0.25);
+    }
+    .output-filter-note {
+        font-size: 0.78rem;
+        color: #8eb9d0;
+        margin: 0 0 0.65rem;
+    }
     div[data-testid="stExpander"] {
         background: rgba(13, 33, 55, 0.55);
         border: 1px solid #1e3a5f;
@@ -1821,6 +1860,8 @@ def _pending_remediation_approval(result: dict) -> bool:
         if action.get("requires_approval") or action.get("human_approval_required"):
             if action.get("execution_status", "pending_human_approval") != "executed":
                 return True
+    if result.get("validation", {}).get("requires_approval"):
+        return True
     return bool(result.get("compliance", {}).get("requires_approval"))
 
 
@@ -1831,7 +1872,16 @@ def _pipeline_fully_complete(result: dict) -> bool:
         return False
     if any(n.get("status") == "blocked" for n in nodes):
         return False
-    required = ("intake", "planner", "log_analysis", "compliance", "rca", "remediation", "auditor")
+    required = (
+        "intake",
+        "planner",
+        "log_analysis",
+        "compliance",
+        "rca",
+        "remediation",
+        "validation",
+        "auditor",
+    )
     by_key = {n["key"]: n for n in nodes}
     return all(by_key.get(k, {}).get("status") == "completed" for k in required)
 
@@ -2213,13 +2263,19 @@ def run_orchestration(text: str) -> None:
     if live_row:
         live_row["status"] = "ACTIVE"
     try:
-        with st.spinner("Orchestrating 7 agents…"):
+        with st.spinner("Orchestrating 8 agents…"):
             orch = SentinelOrchestrator()
             st.session_state.result = orch.run(text)
             st.session_state.active_case_result = st.session_state.result
     finally:
         st.session_state.incident_running = False
         sync_case_status_from_result()
+    result = st.session_state.get("result")
+    if result and result.get("used_fallback"):
+        st.warning(
+            "LLM providers were unavailable — analysis used deterministic fallback. "
+            "Check GROQ_API_KEY / OPENAI_API_KEY and retry."
+        )
 
 
 def _section_heading(title: str, icon: str = "") -> str:
@@ -2465,9 +2521,67 @@ PIPELINE_ICONS = {
 }
 
 
+def _sanitize_display_text(text: str) -> tuple[str, bool]:
+    """Apply output guardrails; return (text, filtered_flag)."""
+    if not text:
+        return text, False
+    check = validate_llm_output(str(text))
+    filtered = bool(check.get("violations"))
+    return check.get("sanitized_output", text), filtered
+
+
+def _filter_result_for_display(result: dict) -> tuple[dict, bool]:
+    """Return a shallow copy with sanitized LLM summary fields for UI."""
+    if not result:
+        return result, False
+    out = dict(result)
+    any_filtered = False
+    for key in ("intake", "log_analysis", "rca", "compliance", "remediation", "validation", "auditor"):
+        block = out.get(key)
+        if not isinstance(block, dict):
+            continue
+        block = dict(block)
+        for field in ("summary", "executive_summary", "root_cause", "plan_summary"):
+            if field in block and block[field]:
+                block[field], hit = _sanitize_display_text(str(block[field]))
+                any_filtered = any_filtered or hit
+        if block.get("actions"):
+            actions = []
+            for action in block["actions"]:
+                a = dict(action)
+                if a.get("action"):
+                    a["action"], hit = _sanitize_display_text(str(a["action"]))
+                    any_filtered = any_filtered or hit
+                actions.append(a)
+            block["actions"] = actions
+        out[key] = block
+    return out, any_filtered
+
+
+def render_trust_indicators(*, output_filtered: bool = False) -> None:
+    badges = ['<span class="trust-badge synthetic">Synthetic data only</span>']
+    if output_filtered:
+        badges.append('<span class="trust-badge">Output Filtered</span>')
+    st.markdown(
+        f'<div class="trust-badges">{"".join(badges)}</div>'
+        '<p class="output-filter-note">LLM output validated before display. '
+        "Synthetic data only — no real PII processed.</p>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_workflow_pipeline(result: dict) -> None:
     st.markdown(_section_heading("Agent Workflow Status", "◉"), unsafe_allow_html=True)
-    nodes = build_pipeline_status(result)
+    st.markdown(
+        '<div class="orchestration-card">'
+        "<strong>Agent Communication:</strong> Shared Context Orchestration — "
+        "each agent reads and writes the orchestrator <code>context</code> object "
+        "before the next step runs.</div>",
+        unsafe_allow_html=True,
+    )
+    display_result, filtered = _filter_result_for_display(result)
+    render_trust_indicators(output_filtered=filtered)
+    nodes = build_pipeline_status(display_result)
     if not nodes:
         return
 
@@ -2658,11 +2772,13 @@ def render_structured_investigation(
     result: dict, *, show_remediation: bool = True, show_hero: bool = False
 ) -> None:
     """Stakeholder-friendly sections from orchestrator session results."""
+    result, _filtered = _filter_result_for_display(result)
     intake = result.get("intake", {})
     log_a = result.get("log_analysis", {})
     rca = result.get("rca", {})
     auditor = result.get("auditor", {})
     remediation = result.get("remediation", {})
+    validation = result.get("validation", {})
 
     if show_hero:
         _render_report_hero(result)
@@ -2728,6 +2844,22 @@ def render_structured_investigation(
     with conf_cols[2]:
         st.metric("Anomalies detected", len(log_a.get("anomalies", [])))
 
+    if validation.get("summary") and get_incident_status() != "blocked":
+        st.markdown('<hr class="report-divider">', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="report-section"><p class="report-section-title">Validation</p></div>',
+            unsafe_allow_html=True,
+        )
+        val_status = validation.get("validation_status", "—")
+        st.markdown(
+            f"**Status:** `{val_status}` · "
+            f"**Confidence:** {validation.get('confidence_score', '—')} · "
+            f"**Requires approval:** {'Yes' if validation.get('requires_approval') else 'No'}"
+        )
+        st.caption(validation.get("summary", ""))
+        if validation.get("high_risk_matches"):
+            st.caption("High-risk phrases: " + ", ".join(validation["high_risk_matches"]))
+
     if show_remediation and get_incident_status() != "blocked":
         st.markdown('<hr class="report-divider">', unsafe_allow_html=True)
         st.markdown(
@@ -2758,6 +2890,7 @@ def render_structured_investigation(
                 "rca": result.get("rca"),
                 "compliance": result.get("compliance"),
                 "remediation": result.get("remediation"),
+                "validation": result.get("validation"),
                 "auditor": result.get("auditor"),
             }
         )
@@ -2804,6 +2937,7 @@ def render_metrics(result: dict, *, emphasize_services: bool = False) -> None:
 
 
 def render_executive_summary(result: dict) -> None:
+    result, _filtered = _filter_result_for_display(result)
     auditor = result.get("auditor", {})
     intake = result.get("intake", {})
     inc_label, _ = incident_status_display()

@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
+
+# Output filtering patterns (PII / secrets redaction before UI display)
+_EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+_PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?!\d)")
+_SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+_API_KEY_RE = re.compile(
+    r"\b(?:sk-[a-zA-Z0-9]{20,}|grok_[a-zA-Z0-9]{20,}|"
+    r"api[_-]?key[=:\s]+[a-zA-Z0-9_-]{16,})\b",
+    re.IGNORECASE,
+)
 
 
 BLOCKED_PHRASES = [
@@ -77,3 +88,41 @@ def check_guardrails(text: str, source: str = "user_input") -> GuardrailResult:
             "action": "continue",
         },
     )
+
+
+def validate_llm_output(output_text: str) -> dict[str, Any]:
+    """
+    Sanitize LLM-generated text before display.
+
+    Returns sanitized_output, violations list, and risk_level (low | medium | high).
+    Redacts emails, phone numbers, SSNs, and API key-like tokens.
+    """
+    text = output_text or ""
+    violations: list[str] = []
+    sanitized = text
+
+    if _EMAIL_RE.search(sanitized):
+        violations.append("email_address")
+        sanitized = _EMAIL_RE.sub("[REDACTED_EMAIL]", sanitized)
+    if _PHONE_RE.search(sanitized):
+        violations.append("phone_number")
+        sanitized = _PHONE_RE.sub("[REDACTED_PHONE]", sanitized)
+    if _SSN_RE.search(sanitized):
+        violations.append("ssn")
+        sanitized = _SSN_RE.sub("[REDACTED_SSN]", sanitized)
+    if _API_KEY_RE.search(sanitized):
+        violations.append("api_key")
+        sanitized = _API_KEY_RE.sub("[REDACTED_SECRET]", sanitized)
+
+    if len(violations) >= 2:
+        risk_level = "high"
+    elif violations:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+
+    return {
+        "sanitized_output": sanitized,
+        "violations": violations,
+        "risk_level": risk_level,
+    }

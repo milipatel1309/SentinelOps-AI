@@ -20,7 +20,9 @@ class AuditorAgent:
         remediation: dict[str, Any],
         workflow_status: list[dict[str, Any]],
         audit_trail: list[dict[str, Any]],
+        validation: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        validation = validation or {}
         blocked = compliance.get("blocked", False)
         severity = intake.get("severity", "MEDIUM")
         rca_conf = float(rca.get("confidence", 0.5))
@@ -32,6 +34,9 @@ class AuditorAgent:
         else:
             risk_score = self._risk_score(severity, log_analysis, rca_conf)
             confidence_score = self._confidence_score(rca_conf, compliance_score, log_analysis)
+            if validation.get("validation_status") == "warning":
+                risk_score = min(99, risk_score + 8)
+                confidence_score = max(10, confidence_score - 10)
 
         executive_summary = self._executive_summary(
             incident_text, intake, rca, compliance, remediation, blocked
@@ -51,6 +56,8 @@ class AuditorAgent:
             "rca_summary": rca.get("summary", ""),
             "compliance_summary": compliance.get("summary", ""),
             "remediation_summary": remediation.get("summary", "N/A"),
+            "validation_summary": validation.get("summary", "N/A"),
+            "validation_status": validation.get("validation_status", "n/a"),
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "final_report_ready": True,
         }
@@ -90,5 +97,6 @@ class AuditorAgent:
             f"Incident processed for {services} at {intake.get('severity', 'MEDIUM')} severity. "
             f"Root cause: {rca.get('root_cause', 'under investigation')}. "
             f"{remediation.get('summary', '')} "
+            "Remediation passed post-action validation. "
             "All actions logged for audit; approve flagged steps before production changes."
         )

@@ -490,6 +490,26 @@
       "Step 5: Rollback AuthService deployment"
     ]
   },
+  "validation": {
+    "agent": "ValidationAgent",
+    "status": "completed",
+    "validation_status": "warning",
+    "confidence_score": 0.78,
+    "requires_approval": true,
+    "high_risk_matches": ["rollback production"],
+    "summary": "Remediation validation warning: 1 high-risk phrase(s) in plan. Human approval still required on flagged steps.",
+    "started_at": "2026-05-19T02:33:29.310000+00:00",
+    "completed_at": "2026-05-19T02:33:29.320000+00:00",
+    "execution_duration_ms": 640.0,
+    "confidence": 0.78,
+    "findings": [
+      "Remediation validation warning: 1 high-risk phrase(s) in plan.",
+      "rollback production"
+    ],
+    "reasoning": "Scanned remediation narrative for destructive or policy-bypass language; set approval flags when high-risk phrases appear.",
+    "evidence_analyzed": ["Remediation validation warning: 1 high-risk phrase(s) in plan."],
+    "actions_taken": ["Status: completed", "Remediation validation warning: 1 high-risk phrase(s) in plan."]
+  },
   "auditor": {
     "agent": "AuditorAgent",
     "status": "completed",
@@ -539,10 +559,16 @@
         "detail": "Generated 5 remediation steps (2 require human approval; none auto-executed)."
       },
       {
+        "agent": "ValidationAgent",
+        "label": "Validation",
+        "status": "completed",
+        "detail": "Remediation validation warning: 1 high-risk phrase(s) in plan."
+      },
+      {
         "agent": "AuditorAgent",
         "label": "Auditor",
-        "status": "running",
-        "detail": ""
+        "status": "completed",
+        "detail": "Final report ready"
       }
     ],
     "audit_trail": [
@@ -649,6 +675,12 @@
       "label": "Remediation",
       "status": "completed",
       "detail": "Generated 5 remediation steps (2 require human approval; none auto-executed)."
+    },
+    {
+      "agent": "ValidationAgent",
+      "label": "Validation",
+      "status": "completed",
+      "detail": "Remediation validation warning: 1 high-risk phrase(s) in plan."
     },
     {
       "agent": "AuditorAgent",

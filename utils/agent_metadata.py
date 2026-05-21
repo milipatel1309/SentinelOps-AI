@@ -14,6 +14,7 @@ PIPELINE_AGENTS: list[tuple[str, str, str]] = [
     ("compliance", "Compliance", "ComplianceAgent"),
     ("rca", "Root Cause", "RootCauseAgent"),
     ("remediation", "Remediation", "RemediationAgent"),
+    ("validation", "Validation", "ValidationAgent"),
     ("auditor", "Auditor", "AuditorAgent"),
 ]
 
@@ -41,6 +42,7 @@ def _default_duration_ms(agent_id: str) -> float:
             "ComplianceAgent": 890,
             "RootCauseAgent": 1560,
             "RemediationAgent": 1120,
+            "ValidationAgent": 640,
             "AuditorAgent": 740,
         }
     )
@@ -129,6 +131,10 @@ def _build_findings(agent_id: str, data: dict[str, Any]) -> list[str]:
         return [a.get("action", "") for a in data.get("actions", [])[:5]] or [
             data.get("summary", "No remediation steps")
         ]
+    if agent_id == "ValidationAgent":
+        items = [data.get("summary", "Validation complete")]
+        items.extend(data.get("high_risk_matches", [])[:4])
+        return items
     if agent_id == "AuditorAgent":
         return [
             data.get("executive_summary", "")[:200],
@@ -159,6 +165,10 @@ def _build_reasoning(agent_id: str, data: dict[str, Any]) -> str:
         ),
         "RemediationAgent": (
             "Generated least-privilege remediation steps; high-risk actions flagged for approval."
+        ),
+        "ValidationAgent": (
+            "Scanned remediation narrative for destructive or policy-bypass language; "
+            "set approval flags when high-risk phrases appear."
         ),
         "AuditorAgent": (
             "Aggregated agent outputs into risk/confidence scores and executive narrative."

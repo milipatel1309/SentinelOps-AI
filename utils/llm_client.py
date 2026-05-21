@@ -1,16 +1,20 @@
-"""LLM client with Groq/OpenAI support and deterministic mock fallback."""
+"""LLM client with Groq/OpenAI support, retries, and deterministic mock fallback."""
 
 from __future__ import annotations
 
 import json
 import os
 import re
+import time
 from typing import Any
 
 from dotenv import load_dotenv
 
-# Local: .env via load_dotenv(). Azure App Service: Application settings → os.getenv().
+# Local: .env via load_dotenv(). Azure App Service / Cloud Run: env vars → os.getenv().
 load_dotenv()
+
+MAX_LLM_RETRIES = 2
+_RETRY_BACKOFF_SEC = 0.4
 
 
 def get_llm_status() -> dict[str, str]:
@@ -25,7 +29,7 @@ def get_llm_status() -> dict[str, str]:
 
 
 class LLMClient:
-    """Unified LLM interface: Groq → OpenAI → rule-based mock."""
+    """Unified LLM interface: Groq → OpenAI → rule-based mock with retries."""
 
     def __init__(self) -> None:
         self.groq_key = (os.getenv("GROQ_API_KEY") or "").strip() or None
@@ -33,6 +37,7 @@ class LLMClient:
         self._groq_client = None
         self._openai_client = None
         self.provider = self._detect_provider()
+        self.last_used_fallback = self.provider == "mock"
 
     def _detect_provider(self) -> str:
         return get_llm_status()["mode"]
@@ -64,16 +69,39 @@ class LLMClient:
         mock_response: dict[str, Any] | None = None,
         temperature: float = 0.2,
     ) -> dict[str, Any]:
-        """Return parsed JSON dict from LLM or mock."""
-        if self.provider == "groq":
-            result = self._call_groq(system_prompt, user_prompt, temperature)
-            if result is not None:
-                return result
-        if self.provider in ("groq", "openai") and self.openai_key:
-            result = self._call_openai(system_prompt, user_prompt, temperature)
-            if result is not None:
-                return result
-        return mock_response or {"raw": user_prompt[:500]}
+        """Return parsed JSON dict from LLM or deterministic mock fallback."""
+        last_error: Exception | None = None
+
+        for attempt in range(MAX_LLM_RETRIES + 1):
+            try:
+                if self.provider == "groq":
+                    result = self._call_groq(system_prompt, user_prompt, temperature)
+                    if result is not None:
+                        self.last_used_fallback = False
+                        result["used_fallback"] = False
+                        return result
+                if self.provider in ("groq", "openai") and self.openai_key:
+                    result = self._call_openai(system_prompt, user_prompt, temperature)
+                    if result is not None:
+                        self.last_used_fallback = False
+                        result["used_fallback"] = False
+                        return result
+            except Exception as exc:
+                last_error = exc
+                if attempt < MAX_LLM_RETRIES:
+                    time.sleep(_RETRY_BACKOFF_SEC * (attempt + 1))
+                    continue
+                break
+
+            if attempt < MAX_LLM_RETRIES and self.provider != "mock":
+                time.sleep(_RETRY_BACKOFF_SEC * (attempt + 1))
+
+        self.last_used_fallback = True
+        fallback = dict(mock_response or {"raw": (user_prompt or "")[:500]})
+        fallback["used_fallback"] = True
+        if last_error is not None:
+            fallback["fallback_reason"] = type(last_error).__name__
+        return fallback
 
     def _call_groq(
         self, system_prompt: str, user_prompt: str, temperature: float
@@ -81,20 +109,17 @@ class LLMClient:
         client = self._get_groq()
         if not client:
             return None
-        try:
-            resp = client.chat.completions.create(
-                model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=temperature,
-                response_format={"type": "json_object"},
-            )
-            content = resp.choices[0].message.content or "{}"
-            return json.loads(content)
-        except Exception:
-            return None
+        resp = client.chat.completions.create(
+            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content or "{}"
+        return json.loads(content)
 
     def _call_openai(
         self, system_prompt: str, user_prompt: str, temperature: float
@@ -102,20 +127,17 @@ class LLMClient:
         client = self._get_openai()
         if not client:
             return None
-        try:
-            resp = client.chat.completions.create(
-                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=temperature,
-                response_format={"type": "json_object"},
-            )
-            content = resp.choices[0].message.content or "{}"
-            return json.loads(content)
-        except Exception:
-            return None
+        resp = client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content or "{}"
+        return json.loads(content)
 
     @staticmethod
     def extract_keywords(text: str) -> list[str]:
